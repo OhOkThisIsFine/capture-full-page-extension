@@ -462,3 +462,13 @@ function revoke(url) {
 
   return true;
 }
+
+
+/*
+ * Firefox MV3 currently uses a background document rather than an extension
+ * service worker. When this file is loaded there as a background script, expose
+ * the compositor directly so service-worker.js can call it without creating a
+ * Chrome offscreen document. In Chrome this global exists only inside the
+ * offscreen document, so the service worker still communicates by message.
+ */
+globalThis.__cfpCompositorHandle = handle;
