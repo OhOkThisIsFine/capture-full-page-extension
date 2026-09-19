@@ -92,9 +92,10 @@ STORE SUBMISSION
 
 AUTOMATED RELEASES
 - Store automation: store/AUTOMATION_SETUP.md
-- A vX.Y.Z tag builds both packages, creates a GitHub Release, and can submit
-  both Firefox AMO and Chrome Web Store releases once repository credentials
-  are configured.
+- A vX.Y.Z tag builds both packages, creates a GitHub Release, and automatically
+  submits the Firefox AMO release.
+- Chrome Web Store publication is manual-only from the workflow and remains
+  optional.
 - docs/privacy.html can be deployed automatically with GitHub Pages.
 
 DOWNLOAD PROMPT
