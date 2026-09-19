@@ -90,6 +90,13 @@ STORE SUBMISSION
 - Privacy policy: PRIVACY.md
 - Hostable privacy page: docs/privacy.html
 
+AUTOMATED RELEASES
+- Store automation: store/AUTOMATION_SETUP.md
+- A vX.Y.Z tag builds both packages, creates a GitHub Release, and can submit
+  both Firefox AMO and Chrome Web Store releases once repository credentials
+  are configured.
+- docs/privacy.html can be deployed automatically with GitHub Pages.
+
 DOWNLOAD PROMPT
 The extension uses saveAs:false. Chrome's global setting
 "Ask where to save each file before downloading" must also be off for a fully
