@@ -1,8 +1,10 @@
 const MENU_ID = "capture-full-page";
 const OFFSCREEN_URL = "offscreen.html";
 const CAPTURE_DELAY_MS = 560;
+const MAX_CAPTURE_FRAMES = 20000;
+const RPC_TIMEOUT_MS = 15000;
 
-const activeCaptures = new Set();
+let activeCapture = null;
 let offscreenCreation = null;
 
 function installMenu() {
@@ -20,25 +22,49 @@ chrome.runtime.onStartup.addListener(installMenu);
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId !== MENU_ID) return;
-  startCapture(tab);
+  const initialized = startCapture(tab);
+  initialized?.catch(() => {});
+});
+
+chrome.tabs.onActivated.addListener(activeInfo => {
+  if (!activeCapture) return;
+  if (activeInfo.windowId !== activeCapture.windowId) return;
+  if (activeInfo.tabId === activeCapture.tabId) return;
+
+  activeCapture.cancelReason =
+    "Capture stopped because another tab became active in the capture window.";
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.target === "cfp-worker" && message?.type === "offscreen-idle") {
+    closeOffscreenIfIdle().catch(() => {});
+    return;
+  }
+
   if (message?.type !== "capture-active-tab") return;
 
   chrome.tabs.query({ active: true, currentWindow: true })
-    .then(([tab]) => {
+    .then(async ([tab]) => {
       if (!tab?.id || tab.windowId == null) {
         sendResponse({ ok: false, error: "No active tab is available to capture." });
         return;
       }
 
-      if (!startCapture(tab)) {
-        sendResponse({ ok: false, error: "A capture is already running for this tab." });
+      const initialized = startCapture(tab);
+      if (!initialized) {
+        sendResponse({ ok: false, error: "A capture is already running." });
         return;
       }
 
-      sendResponse({ ok: true });
+      try {
+        await initialized;
+        sendResponse({ ok: true });
+      } catch (error) {
+        sendResponse({
+          ok: false,
+          error: error?.message || "Could not initialize the capture."
+        });
+      }
     })
     .catch(error => {
       sendResponse({
@@ -51,25 +77,64 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 function startCapture(tab) {
-  if (!tab?.id || tab.windowId == null) return false;
-  if (activeCaptures.has(tab.id)) return false;
+  if (!tab?.id || tab.windowId == null) return null;
+  if (activeCapture) return null;
 
-  activeCaptures.add(tab.id);
-  captureFullPage(tab)
-    .catch(error => console.error("Capture Full Page failed:", error))
-    .finally(() => activeCaptures.delete(tab.id));
+  let resolveInitialized;
+  let rejectInitialized;
+  const initialized = new Promise((resolve, reject) => {
+    resolveInitialized = resolve;
+    rejectInitialized = reject;
+  });
 
-  return true;
+  const capture = {
+    tabId: tab.id,
+    windowId: tab.windowId,
+    initialized: false,
+    cancelReason: null,
+    resolveInitialized,
+    rejectInitialized,
+    run: null
+  };
+
+  activeCapture = capture;
+
+  const markInitialized = () => {
+    if (capture.initialized) return;
+    capture.initialized = true;
+    capture.resolveInitialized();
+  };
+
+  capture.run = captureFullPage(tab, markInitialized)
+    .catch(error => {
+      if (!capture.initialized) {
+        capture.initialized = true;
+        capture.rejectInitialized(error);
+      }
+      console.error("Capture Full Page failed:", error);
+    })
+    .finally(() => {
+      if (activeCapture === capture) activeCapture = null;
+      closeOffscreenIfIdle().catch(() => {});
+    });
+
+  return initialized;
 }
 
-async function captureFullPage(tab) {
+async function captureFullPage(tab, markInitialized) {
   const sessionId = crypto.randomUUID();
   const tabId = tab.id;
+  const windowId = tab.windowId;
   let port = null;
   let rpc = null;
   let prepared = false;
+  let offscreenStarted = false;
+  let finishedUrl = null;
+  let downloadOwnsUrl = false;
 
   try {
+    await assertOriginalTabActive(tabId, windowId);
+
     await chrome.scripting.executeScript({
       target: { tabId },
       files: ["content.js"]
@@ -87,6 +152,7 @@ async function captureFullPage(tab) {
     }
 
     await ensureOffscreen();
+    offscreenStarted = true;
     const start = await chrome.runtime.sendMessage({
       target: "cfp-offscreen",
       type: "start",
@@ -95,11 +161,32 @@ async function captureFullPage(tab) {
     });
     throwIfOffscreenError(start);
 
+    markInitialized();
+
     let frameCount = 0;
     let position = prep.position;
+    let previousPositionKey = null;
 
     while (position) {
-      const dataUrl = await captureVisible(tab.windowId);
+      if (frameCount >= MAX_CAPTURE_FRAMES) {
+        throw new Error(
+          `Capture exceeded the safety limit of ${MAX_CAPTURE_FRAMES} frames.`
+        );
+      }
+
+      const positionKey = [
+        position.logicalX,
+        position.logicalY,
+        position.sourceLeft,
+        position.sourceTop
+      ].join(":");
+
+      if (positionKey === previousPositionKey) {
+        throw new Error("Page scrolling stopped making progress during capture.");
+      }
+      previousPositionKey = positionKey;
+
+      const dataUrl = await captureVisible(tabId, windowId);
 
       const result = await chrome.runtime.sendMessage({
         target: "cfp-offscreen",
@@ -115,14 +202,26 @@ async function captureFullPage(tab) {
 
       const next = await rpc.call("advance");
       if (next.done) break;
+      if (!next.position) {
+        throw new Error("The page did not provide the next capture position.");
+      }
       position = next.position;
 
-      // captureVisibleTab is limited to two calls per second. FireShot also
-      // allows time for the page/compositor to settle between scrolls.
+      // captureVisibleTab is limited to two calls per second. Allow the page and
+      // compositor to settle between scrolls as well.
       await sleep(CAPTURE_DELAY_MS);
     }
 
     if (frameCount === 0) throw new Error("No screenshot frames were captured.");
+
+    // The page no longer needs to remain expanded/scrolled once every viewport
+    // has been captured. Restore it before the potentially expensive PNG encode.
+    try {
+      await rpc.call("restore");
+      prepared = false;
+    } catch (error) {
+      console.warn("Capture Full Page could not restore the page early:", error);
+    }
 
     const finished = await chrome.runtime.sendMessage({
       target: "cfp-offscreen",
@@ -132,9 +231,10 @@ async function captureFullPage(tab) {
     throwIfOffscreenError(finished);
 
     if (!finished?.url) throw new Error("Could not encode the screenshot.");
+    finishedUrl = finished.url;
 
     const downloadId = await chrome.downloads.download({
-      url: finished.url,
+      url: finishedUrl,
       filename: makeFilename(tab),
       saveAs: false,
       conflictAction: "uniquify"
@@ -142,15 +242,12 @@ async function captureFullPage(tab) {
 
     if (downloadId == null) throw new Error("Chrome did not start the download.");
 
+    downloadOwnsUrl = true;
     const listener = delta => {
       if (delta.id !== downloadId || !delta.state) return;
       if (delta.state.current === "complete" || delta.state.current === "interrupted") {
         chrome.downloads.onChanged.removeListener(listener);
-        chrome.runtime.sendMessage({
-          target: "cfp-offscreen",
-          type: "revoke",
-          url: finished.url
-        }).catch(() => {});
+        revokeOffscreenUrl(finishedUrl).catch(() => {});
       }
     };
     chrome.downloads.onChanged.addListener(listener);
@@ -158,8 +255,17 @@ async function captureFullPage(tab) {
     if (prepared && rpc) {
       await rpc.call("restore").catch(() => {});
     }
+
     try { port?.disconnect(); } catch {}
     rpc?.close();
+
+    if (offscreenStarted && !finishedUrl) {
+      await abortOffscreenSession(sessionId).catch(() => {});
+    }
+
+    if (finishedUrl && !downloadOwnsUrl) {
+      await revokeOffscreenUrl(finishedUrl).catch(() => {});
+    }
   }
 }
 
@@ -168,19 +274,30 @@ function createPortRPC(port) {
   let disconnected = false;
   const pending = new Map();
 
+  const settlePending = (messageId, action) => {
+    const item = pending.get(messageId);
+    if (!item) return null;
+    pending.delete(messageId);
+    clearTimeout(item.timer);
+    action(item);
+    return item;
+  };
+
   const onMessage = message => {
     if (!message || message.replyTo == null) return;
-    const item = pending.get(message.replyTo);
-    if (!item) return;
-    pending.delete(message.replyTo);
-    if (message.error) item.reject(new Error(message.error));
-    else item.resolve(message.result);
+    settlePending(message.replyTo, item => {
+      if (message.error) item.reject(new Error(message.error));
+      else item.resolve(message.result);
+    });
   };
 
   const onDisconnect = () => {
     disconnected = true;
     const err = new Error("The page capture connection was closed.");
-    for (const { reject } of pending.values()) reject(err);
+    for (const item of pending.values()) {
+      clearTimeout(item.timer);
+      item.reject(err);
+    }
     pending.clear();
   };
 
@@ -190,9 +307,17 @@ function createPortRPC(port) {
   return {
     call(method, payload = null) {
       if (disconnected) return Promise.reject(new Error("Capture connection is closed."));
+
       const id = ++seq;
       return new Promise((resolve, reject) => {
-        pending.set(id, { resolve, reject });
+        const timer = setTimeout(() => {
+          const item = pending.get(id);
+          if (!item) return;
+          pending.delete(id);
+          reject(new Error(`Capture command "${method}" timed out.`));
+        }, RPC_TIMEOUT_MS);
+
+        pending.set(id, { resolve, reject, timer });
         port.postMessage({ id, method, payload });
       });
     },
@@ -200,23 +325,55 @@ function createPortRPC(port) {
       port.onMessage.removeListener(onMessage);
       port.onDisconnect.removeListener(onDisconnect);
       const err = new Error("Capture RPC closed.");
-      for (const { reject } of pending.values()) reject(err);
+      for (const item of pending.values()) {
+        clearTimeout(item.timer);
+        item.reject(err);
+      }
       pending.clear();
     }
   };
 }
 
-async function captureVisible(windowId) {
+async function assertOriginalTabActive(tabId, windowId) {
+  if (activeCapture?.tabId === tabId && activeCapture.cancelReason) {
+    throw new Error(activeCapture.cancelReason);
+  }
+
+  const tab = await chrome.tabs.get(tabId);
+  if (!tab || tab.windowId !== windowId || !tab.active) {
+    throw new Error(
+      "Capture stopped because the original tab is no longer active in its window."
+    );
+  }
+
+  const [activeTab] = await chrome.tabs.query({ active: true, windowId });
+  if (!activeTab || activeTab.id !== tabId) {
+    throw new Error(
+      "Capture stopped because the original tab is no longer active in its window."
+    );
+  }
+}
+
+async function captureVisible(tabId, windowId) {
   let lastError = null;
+
   for (let attempt = 0; attempt < 5; attempt += 1) {
+    await assertOriginalTabActive(tabId, windowId);
+
     try {
       const dataUrl = await chrome.tabs.captureVisibleTab(windowId, { format: "png" });
+      await assertOriginalTabActive(tabId, windowId);
       if (dataUrl) return dataUrl;
     } catch (error) {
+      if (activeCapture?.cancelReason) {
+        throw new Error(activeCapture.cancelReason);
+      }
       lastError = error;
     }
+
     await sleep(520);
   }
+
   throw lastError || new Error("captureVisibleTab failed.");
 }
 
@@ -238,6 +395,53 @@ async function ensureOffscreen() {
     });
   }
   await offscreenCreation;
+}
+
+async function abortOffscreenSession(sessionId) {
+  const result = await chrome.runtime.sendMessage({
+    target: "cfp-offscreen",
+    type: "abort",
+    sessionId
+  });
+  throwIfOffscreenError(result);
+}
+
+async function revokeOffscreenUrl(url) {
+  if (!url) return;
+  const result = await chrome.runtime.sendMessage({
+    target: "cfp-offscreen",
+    type: "revoke",
+    url
+  });
+  throwIfOffscreenError(result);
+
+  if (result?.idle && !activeCapture) {
+    await closeOffscreenIfIdle();
+  }
+}
+
+async function closeOffscreenIfIdle() {
+  if (activeCapture || offscreenCreation) return;
+
+  const documentUrl = chrome.runtime.getURL(OFFSCREEN_URL);
+  const contexts = await chrome.runtime.getContexts({
+    contextTypes: ["OFFSCREEN_DOCUMENT"],
+    documentUrls: [documentUrl]
+  });
+  if (!contexts.length || activeCapture) return;
+
+  let status;
+  try {
+    status = await chrome.runtime.sendMessage({
+      target: "cfp-offscreen",
+      type: "status"
+    });
+  } catch {
+    return;
+  }
+
+  if (!status?.idle || activeCapture) return;
+  await chrome.offscreen.closeDocument().catch(() => {});
 }
 
 function throwIfOffscreenError(result) {

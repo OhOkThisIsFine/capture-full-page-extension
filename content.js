@@ -6,6 +6,7 @@
   const FIRST_VERTICAL_OVERLAP = 300;
   const VERTICAL_OVERLAP = 190;
   const HORIZONTAL_OVERLAP = 30;
+  const SCROLL_EPSILON = 0.5;
 
   let state = null;
 
@@ -39,6 +40,9 @@
     };
 
     port.onMessage.addListener(onMessage);
+    port.onDisconnect.addListener(() => {
+      restore().catch(() => {});
+    });
   });
 
   async function prepare() {
@@ -160,25 +164,44 @@
       var frozenTargetHeight = Math.max(scroller.scrollHeight, scroller.clientHeight, 1);
     }
 
+    const iframeExpansion = expandSameOriginIframes(isDocument ? null : scroller);
+    if (iframeExpansion.count > 0) {
+      await settle();
+
+      if (isDocument) {
+        frozenTargetWidth = Math.max(
+          frozenTargetWidth,
+          documentScroller.scrollWidth,
+          document.documentElement.scrollWidth,
+          document.body?.scrollWidth || 0
+        );
+        frozenTargetHeight = Math.max(
+          frozenTargetHeight,
+          documentScroller.scrollHeight,
+          document.documentElement.scrollHeight,
+          document.body?.scrollHeight || 0
+        );
+      } else {
+        frozenTargetWidth = Math.max(frozenTargetWidth, scroller.scrollWidth, scroller.clientWidth);
+        frozenTargetHeight = Math.max(frozenTargetHeight, scroller.scrollHeight, scroller.clientHeight);
+      }
+    }
+
+    if (iframeExpansion.blocked > 0) {
+      console.warn(
+        `Capture Full Page: ${iframeExpansion.blocked} cross-origin iframe(s) could not be expanded and will remain viewport-only.`
+      );
+    }
+
     const originalScrollLeft = scroller.scrollLeft;
     const originalScrollTop = scroller.scrollTop;
-
-    const captureStyle = document.createElement("style");
-    captureStyle.id = "__cfp_capture_style__";
-    captureStyle.textContent = `
-      *, *::before, *::after {
-        transition: none !important;
-        animation: none !important;
-        scroll-behavior: auto !important;
-        scroll-snap-type: none !important;
-      }
-    `;
-    (document.head || document.documentElement).appendChild(captureStyle);
+    const captureStyles = installCaptureStyles();
 
     state = {
       scroller,
       isDocument,
-      captureStyle,
+      captureStyles,
+      iframeExpansion,
       originalScrollLeft,
       originalScrollTop,
       documentScroller,
@@ -224,10 +247,12 @@
     const viewport = getViewportMetrics();
     const maxX = Math.max(0, state.targetWidth - viewport.clientWidth);
     const maxY = Math.max(0, state.targetHeight - viewport.clientHeight);
+    const logicalXBefore = state.currentX + state.logicalOffsetX;
 
-    if (state.currentX < maxX - 0.5) {
+    if (logicalXBefore < maxX - SCROLL_EPSILON) {
       const stepX = Math.max(1, viewport.clientWidth - HORIZONTAL_OVERLAP);
-      const desiredX = Math.min(maxX, state.currentX + stepX);
+      const desiredLogicalX = Math.min(maxX, logicalXBefore + stepX);
+      const desiredX = Math.max(0, desiredLogicalX - state.logicalOffsetX);
       const beforeWidth = scroller.scrollWidth;
 
       scroller.scrollLeft = desiredX;
@@ -235,11 +260,19 @@
 
       const actualX = scroller.scrollLeft;
       const afterWidth = scroller.scrollWidth;
-      if (afterWidth < beforeWidth && actualX < desiredX) {
-        state.logicalOffsetX += beforeWidth - afterWidth;
+      if (beforeWidth - afterWidth > 4) {
+        throw new Error(
+          "The page width changed during capture, so the frozen capture boundary is no longer reliable."
+        );
       }
 
-      const deltaX = actualX - state.currentX;
+      const logicalXAfter = actualX + state.logicalOffsetX;
+      if (logicalXAfter <= logicalXBefore + SCROLL_EPSILON) {
+        throw new Error(
+          `Horizontal scrolling stopped at ${Math.round(logicalXBefore)}px before the frozen capture boundary.`
+        );
+      }
+
       state.currentX = actualX;
       suppressViewportAnchoredElements(true);
       state.frameIndex += 1;
@@ -247,7 +280,8 @@
       return { done: false, position: currentPosition(false) };
     }
 
-    if (state.currentY >= maxY - 0.5) {
+    const logicalYBefore = state.currentY + state.logicalOffsetY;
+    if (logicalYBefore >= maxY - SCROLL_EPSILON) {
       return { done: true };
     }
 
@@ -257,9 +291,12 @@
       stepY = Math.max(1, viewport.clientHeight - (first ? STICKY_CROP : 40));
     }
 
-    const desiredY = Math.min(maxY, state.currentY + stepY);
+    const desiredLogicalY = Math.min(maxY, logicalYBefore + stepY);
+    const desiredY = Math.max(0, desiredLogicalY - state.logicalOffsetY);
     const beforeHeight = scroller.scrollHeight;
 
+    // A new row always starts at the physical/logical left edge.
+    state.logicalOffsetX = 0;
     scroller.scrollLeft = 0;
     scroller.scrollTop = desiredY;
     await settle();
@@ -268,8 +305,17 @@
     const actualY = scroller.scrollTop;
     const afterHeight = scroller.scrollHeight;
 
-    if (afterHeight < beforeHeight && actualY < desiredY) {
-      state.logicalOffsetY += beforeHeight - afterHeight;
+    if (beforeHeight - afterHeight > 4) {
+      throw new Error(
+        "The page height changed during capture, so the frozen capture boundary is no longer reliable."
+      );
+    }
+
+    const logicalYAfter = actualY + state.logicalOffsetY;
+    if (logicalYAfter <= logicalYBefore + SCROLL_EPSILON) {
+      throw new Error(
+        `Vertical scrolling stopped at ${Math.round(logicalYBefore)}px before the frozen capture boundary.`
+      );
     }
 
     state.currentX = actualX;
@@ -293,7 +339,8 @@
       sourceTop: viewport.sourceTop,
       clientWidth: viewport.clientWidth,
       clientHeight: viewport.clientHeight,
-      stickyCrop: state.currentY > 0 || afterVerticalMove ? STICKY_CROP : 0
+      stickyCrop:
+        state.currentY + state.logicalOffsetY > 0 || afterVerticalMove ? STICKY_CROP : 0
     };
   }
 
@@ -488,6 +535,120 @@
     };
   }
 
+  function installCaptureStyles() {
+    const css = `
+      *, *::before, *::after {
+        transition: none !important;
+        animation: none !important;
+        scroll-behavior: auto !important;
+        scroll-snap-type: none !important;
+      }
+    `;
+
+    const styles = [];
+    const install = root => {
+      try {
+        const style = document.createElement("style");
+        style.setAttribute("data-cfp-capture-style", "");
+        style.textContent = css;
+        root.appendChild(style);
+        styles.push(style);
+      } catch {}
+    };
+
+    install(document.head || document.documentElement);
+
+    for (const el of allElements(document.documentElement)) {
+      if (el.shadowRoot) install(el.shadowRoot);
+    }
+
+    return styles;
+  }
+
+  function expandSameOriginIframes(scopeScroller) {
+    const saved = [];
+    let count = 0;
+    let blocked = 0;
+
+    for (const el of allElements(document.documentElement)) {
+      if (!(el instanceof HTMLIFrameElement)) continue;
+      if (scopeScroller && !scopeScroller.contains(el)) continue;
+
+      const rect = el.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) continue;
+
+      let frameDocument;
+      try {
+        frameDocument = el.contentDocument;
+        if (!frameDocument) {
+          blocked += 1;
+          continue;
+        }
+        // Accessing location forces the same-origin check in browsers that
+        // expose a non-null contentDocument proxy.
+        void frameDocument.location.href;
+      } catch {
+        blocked += 1;
+        continue;
+      }
+
+      const root = frameDocument.scrollingElement || frameDocument.documentElement;
+      if (!root) continue;
+
+      const contentWidth = Math.max(
+        root.scrollWidth,
+        frameDocument.documentElement?.scrollWidth || 0,
+        frameDocument.body?.scrollWidth || 0,
+        el.clientWidth
+      );
+      const contentHeight = Math.max(
+        root.scrollHeight,
+        frameDocument.documentElement?.scrollHeight || 0,
+        frameDocument.body?.scrollHeight || 0,
+        el.clientHeight
+      );
+
+      const needsWidth = contentWidth > el.clientWidth + 4;
+      const needsHeight = contentHeight > el.clientHeight + 4;
+      if (!needsWidth && !needsHeight) continue;
+
+      const props = {};
+      for (const prop of ["width", "height", "max-width", "max-height"]) {
+        props[prop] = {
+          value: el.style.getPropertyValue(prop),
+          priority: el.style.getPropertyPriority(prop)
+        };
+      }
+      saved.push({ el, props });
+
+      if (needsWidth) {
+        el.style.setProperty("width", `${Math.ceil(contentWidth)}px`, "important");
+        el.style.setProperty("max-width", "none", "important");
+      }
+      if (needsHeight) {
+        el.style.setProperty("height", `${Math.ceil(contentHeight)}px`, "important");
+        el.style.setProperty("max-height", "none", "important");
+      }
+
+      count += 1;
+    }
+
+    return {
+      count,
+      blocked,
+      restore() {
+        for (let i = saved.length - 1; i >= 0; i -= 1) {
+          const { el, props } = saved[i];
+          if (!el?.style) continue;
+          for (const [prop, savedValue] of Object.entries(props)) {
+            restoreProperty(el, prop, savedValue.value, savedValue.priority);
+          }
+        }
+        saved.length = 0;
+      }
+    };
+  }
+
   function isScrollableStyle(style) {
     const values = [style.overflow, style.overflowX, style.overflowY];
     return values.some(value => value === "auto" || value === "scroll" || value === "overlay");
@@ -644,7 +805,11 @@
       restoreProperty(item.el, item.property, item.value, item.priority);
     }
 
-    old.captureStyle?.remove();
+    for (const style of old.captureStyles || []) {
+      style?.remove();
+    }
+
+    old.iframeExpansion?.restore();
 
     if (old.nestedExpansion) {
       // Collapse the app back to its original layout first, then restore both
