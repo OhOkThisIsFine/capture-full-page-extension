@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "Capture Full Page",
+  "version": "5.0.0",
+  "description": "Right-click to capture the full page, including app shells around nested scrolling content.",
+  "minimum_chrome_version": "116",
+  "permissions": [
+    "contextMenus",
+    "activeTab",
+    "scripting",
+    "downloads",
+    "offscreen"
+  ],
+  "background": {
+    "service_worker": "service-worker.js"
+  }
+}
