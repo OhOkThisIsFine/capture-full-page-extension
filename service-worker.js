@@ -153,7 +153,7 @@ async function captureFullPage(tab, markInitialized) {
 
     await ensureOffscreen();
     offscreenStarted = true;
-    const start = await chrome.runtime.sendMessage({
+    const start = await callCompositor({
       target: "cfp-offscreen",
       type: "start",
       sessionId,
@@ -188,7 +188,7 @@ async function captureFullPage(tab, markInitialized) {
 
       const dataUrl = await captureVisible(tabId, windowId);
 
-      const result = await chrome.runtime.sendMessage({
+      const result = await callCompositor({
         target: "cfp-offscreen",
         type: "frame",
         sessionId,
@@ -223,7 +223,7 @@ async function captureFullPage(tab, markInitialized) {
       console.warn("Capture Full Page could not restore the page early:", error);
     }
 
-    const finished = await chrome.runtime.sendMessage({
+    const finished = await callCompositor({
       target: "cfp-offscreen",
       type: "finish",
       sessionId
@@ -377,7 +377,26 @@ async function captureVisible(tabId, windowId) {
   throw lastError || new Error("captureVisibleTab failed.");
 }
 
+function hasSharedCompositor() {
+  return typeof globalThis.__cfpCompositorHandle === "function";
+}
+
+async function callCompositor(message) {
+  if (hasSharedCompositor()) {
+    return globalThis.__cfpCompositorHandle(message);
+  }
+  return chrome.runtime.sendMessage(message);
+}
+
 async function ensureOffscreen() {
+  // Firefox MV3 runs offscreen.js in its background document, where the
+  // compositor is directly callable. Chromium uses a separate offscreen page.
+  if (hasSharedCompositor()) return;
+
+  if (!chrome.offscreen?.createDocument || !chrome.runtime.getContexts) {
+    throw new Error("This browser does not provide a supported capture compositor.");
+  }
+
   const documentUrl = chrome.runtime.getURL(OFFSCREEN_URL);
   const contexts = await chrome.runtime.getContexts({
     contextTypes: ["OFFSCREEN_DOCUMENT"],
@@ -398,7 +417,7 @@ async function ensureOffscreen() {
 }
 
 async function abortOffscreenSession(sessionId) {
-  const result = await chrome.runtime.sendMessage({
+  const result = await callCompositor({
     target: "cfp-offscreen",
     type: "abort",
     sessionId
@@ -408,7 +427,7 @@ async function abortOffscreenSession(sessionId) {
 
 async function revokeOffscreenUrl(url) {
   if (!url) return;
-  const result = await chrome.runtime.sendMessage({
+  const result = await callCompositor({
     target: "cfp-offscreen",
     type: "revoke",
     url
@@ -421,7 +440,10 @@ async function revokeOffscreenUrl(url) {
 }
 
 async function closeOffscreenIfIdle() {
-  if (activeCapture || offscreenCreation) return;
+  // Firefox's compositor lives in the background document itself; there is no
+  // separate document to close.
+  if (hasSharedCompositor()) return;
+  if (activeCapture || offscreenCreation || !chrome.offscreen?.closeDocument) return;
 
   const documentUrl = chrome.runtime.getURL(OFFSCREEN_URL);
   const contexts = await chrome.runtime.getContexts({
@@ -432,7 +454,7 @@ async function closeOffscreenIfIdle() {
 
   let status;
   try {
-    status = await chrome.runtime.sendMessage({
+    status = await callCompositor({
       target: "cfp-offscreen",
       type: "status"
     });
