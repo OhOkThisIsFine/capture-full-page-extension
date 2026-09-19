@@ -49,9 +49,10 @@ SAFETY LIMITS
 
 IFRAME LIMITATION
 Same-origin scrolling iframes can be expanded. Cross-origin iframe internals are
-isolated by the browser and remain viewport-only unless the extension is granted
-host access to those frame origins. The extension deliberately does not request
-broad <all_urls> access just to bypass that boundary.
+isolated by the browser and remain viewport-only in this version. Supporting
+their offscreen contents would require per-frame extension injection/coordination
+plus host access to those frame origins. The extension deliberately does not
+request broad <all_urls> access just to bypass that boundary.
 
 INSTALL
 1. Open chrome://extensions
