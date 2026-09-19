@@ -1,6 +1,17 @@
 name: Publish extension stores
 
 on:
+  pull_request:
+    paths:
+      - ".github/workflows/publish-stores.yml"
+      - "scripts/publish_chrome.sh"
+      - "scripts/build.py"
+      - "manifest.json"
+      - "manifest.firefox.json"
+      - "content.js"
+      - "service-worker.js"
+      - "offscreen.js"
+      - "popup.js"
   push:
     tags:
       - "v*"
