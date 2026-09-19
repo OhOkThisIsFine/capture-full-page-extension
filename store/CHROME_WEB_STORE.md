@@ -69,6 +69,12 @@ A public URL is required in the Developer Dashboard. The repository contains:
 
 Host `docs/privacy.html` at a public HTTPS URL before submission and enter that URL in the privacy policy field.
 
+## GitHub automation
+
+After the one-time Chrome Web Store item, listing/privacy setup, OAuth credentials, and GitHub variables are configured, tagged releases publish automatically through `.github/workflows/publish-stores.yml` using the Chrome Web Store API v2.
+
+See `store/AUTOMATION_SETUP.md` for the exact secrets and variables.
+
 ## Package
 
 Run:
