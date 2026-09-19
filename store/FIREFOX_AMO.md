@@ -55,6 +55,12 @@ Suggested notes for AMO reviewers:
 
 > Capture Full Page is a local screenshot utility. It requests activeTab only after an explicit user action, injects content.js to measure/scroll the page, captures visible viewports, and assembles the PNG locally. Firefox loads offscreen.js and service-worker.js as background scripts; offscreen.js contains the local compositor. The extension makes no network requests, includes no analytics or remote code, and transmits no user data.
 
+## GitHub automation
+
+Firefox can be submitted from the first public version onward by GitHub Actions. Current `web-ext sign --channel=listed` can create the AMO listing when the required metadata and API credentials are supplied.
+
+See `store/AUTOMATION_SETUP.md` for the required AMO secrets and license variable.
+
 ## Package
 
 Run:

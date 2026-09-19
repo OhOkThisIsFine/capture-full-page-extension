@@ -28,6 +28,9 @@ jobs:
           node --check offscreen.js
           node --check popup.js
 
+      - name: Check publisher shell syntax
+        run: bash -n scripts/publish_chrome.sh
+
       - name: Build Chrome and Firefox packages
         run: python scripts/build.py
 

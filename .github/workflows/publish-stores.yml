@@ -1,0 +1,193 @@
+name: Publish extension stores
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/publish-stores.yml"
+      - "scripts/publish_chrome.sh"
+      - "scripts/build.py"
+      - "manifest.json"
+      - "manifest.firefox.json"
+      - "content.js"
+      - "service-worker.js"
+      - "offscreen.js"
+      - "popup.js"
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      target:
+        description: What to publish
+        required: true
+        type: choice
+        options:
+          - build-only
+          - chrome
+          - firefox
+          - both
+        default: build-only
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Verify release tag matches manifest
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          VERSION="$(python - <<'PY'
+          import json
+          print(json.load(open("manifest.json", encoding="utf-8"))["version"])
+          PY
+          )"
+          if [[ "$GITHUB_REF_NAME" != "v$VERSION" ]]; then
+            echo "Tag $GITHUB_REF_NAME does not match manifest version $VERSION" >&2
+            exit 1
+          fi
+
+      - name: Check JavaScript syntax
+        run: |
+          node --check content.js
+          node --check service-worker.js
+          node --check offscreen.js
+          node --check popup.js
+
+      - name: Build Chrome and Firefox packages
+        run: python scripts/build.py
+
+      - name: Validate Firefox package
+        run: npx --yes web-ext@latest lint --source-dir dist/firefox
+
+      - name: Upload build packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: capture-full-page-packages
+          path: dist/*.zip
+          if-no-files-found: error
+
+  github-release:
+    if: github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download packages
+        uses: actions/download-artifact@v5
+        with:
+          name: capture-full-page-packages
+          path: dist
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/*.zip --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/*.zip               --title "$GITHUB_REF_NAME"               --generate-notes
+          fi
+
+  publish-firefox:
+    if: >-
+      github.event_name == 'push' ||
+      inputs.target == 'firefox' ||
+      inputs.target == 'both'
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+      AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+      AMO_LICENSE: ${{ vars.AMO_LICENSE }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Verify AMO configuration
+        shell: bash
+        run: |
+          test -n "$AMO_JWT_ISSUER" || { echo "Missing secret AMO_JWT_ISSUER" >&2; exit 2; }
+          test -n "$AMO_JWT_SECRET" || { echo "Missing secret AMO_JWT_SECRET" >&2; exit 2; }
+          test -n "$AMO_LICENSE" || { echo "Missing repository variable AMO_LICENSE" >&2; exit 2; }
+
+      - name: Build Firefox package
+        run: python scripts/build.py --target firefox
+
+      - name: Create AMO metadata
+        shell: bash
+        run: |
+          jq -n             --arg license "$AMO_LICENSE"             '{
+              summary: {
+                "en-US": "Capture complete webpages as PNG files, including long pages and nested scrolling web apps."
+              },
+              categories: ["other"],
+              version: {
+                license: $license,
+                approval_notes: "Capture Full Page is a local screenshot utility. It uses activeTab only after explicit user action, injects content.js to measure and scroll the page, and assembles the PNG locally in the extension background context. It makes no network requests, includes no analytics or remote code, and transmits no user data."
+              }
+            }' > "$RUNNER_TEMP/amo-metadata.json"
+
+      - name: Submit to Firefox Add-ons
+        run: |
+          npx --yes web-ext@latest sign             --source-dir dist/firefox             --channel listed             --amo-metadata "$RUNNER_TEMP/amo-metadata.json"             --api-key "$AMO_JWT_ISSUER"             --api-secret "$AMO_JWT_SECRET"             --approval-timeout 0             --artifacts-dir dist/amo
+
+  publish-chrome:
+    if: >-
+      github.event_name == 'push' ||
+      inputs.target == 'chrome' ||
+      inputs.target == 'both'
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      CWS_CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
+      CWS_CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
+      CWS_REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
+      CWS_PUBLISHER_ID: ${{ vars.CWS_PUBLISHER_ID }}
+      CWS_EXTENSION_ID: ${{ vars.CWS_EXTENSION_ID }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Build Chrome package
+        run: python scripts/build.py --target chrome
+
+      - name: Publish to Chrome Web Store
+        shell: bash
+        run: |
+          VERSION="$(python - <<'PY'
+          import json
+          print(json.load(open("manifest.json", encoding="utf-8"))["version"])
+          PY
+          )"
+          bash scripts/publish_chrome.sh "dist/capture-full-page-chrome-$VERSION.zip"
