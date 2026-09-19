@@ -4,6 +4,7 @@ const MAX_OUTPUT_PIXELS = 200 * 1024 * 1024;
 
 const sessions = new Map();
 const blobUrls = new Set();
+const sessionUrls = new Map();
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.target !== "cfp-offscreen") return;
@@ -30,6 +31,7 @@ async function handle(message) {
       return finish(message.sessionId);
     case "abort":
       cleanupSession(message.sessionId);
+      revokeSessionUrl(message.sessionId);
       return { ok: true, idle: isIdle() };
     case "revoke":
       revoke(message.url);
@@ -234,6 +236,7 @@ async function finish(sessionId) {
   const pngBlob = await encodePngFromTiles(s);
   const url = URL.createObjectURL(pngBlob);
   blobUrls.add(url);
+  sessionUrls.set(sessionId, url);
 
   const width = s.widthPx;
   const height = s.heightPx;
@@ -441,9 +444,21 @@ function crc32(bytes) {
   return (crc ^ 0xFFFFFFFF) >>> 0;
 }
 
+function revokeSessionUrl(sessionId) {
+  const url = sessionUrls.get(sessionId);
+  if (!url) return false;
+  sessionUrls.delete(sessionId);
+  return revoke(url);
+}
+
 function revoke(url) {
   if (!url || !blobUrls.has(url)) return false;
   URL.revokeObjectURL(url);
   blobUrls.delete(url);
+
+  for (const [sessionId, sessionUrl] of sessionUrls) {
+    if (sessionUrl === url) sessionUrls.delete(sessionId);
+  }
+
   return true;
 }
