@@ -205,7 +205,7 @@ async function finalizeTile(s, index) {
   s.savedTiles.set(index, {
     blob,
     height: tile.height,
-    coverage: tile.coverage
+    coverage: tile.coverage.slice()
   });
 
   tile.canvas.width = 1;
@@ -228,7 +228,7 @@ async function finish(sessionId) {
     if (!tile) {
       throw new Error(`Capture is incomplete: output tile ${i} was never captured.`);
     }
-    validateTileCoverage(s.widthPx, tile.height, tile.coverage, i);
+    validateTileCoverage(s.widthPx, tile.height, tile.coverage, i, s.tileHeight);
   }
 
   const pngBlob = await encodePngFromTiles(s);
@@ -252,7 +252,7 @@ async function finish(sessionId) {
   return { url, width, height };
 }
 
-function validateTileCoverage(width, height, rects, tileIndex) {
+function validateTileCoverage(width, height, rects, tileIndex, tileHeight) {
   if (!rects?.length) {
     throw new Error(`Capture is incomplete: output tile ${tileIndex} has no pixels.`);
   }
@@ -292,7 +292,7 @@ function validateTileCoverage(width, height, rects, tileIndex) {
     }
 
     if (coveredTo < width) {
-      const globalY = tileIndex * height + y0;
+      const globalY = tileIndex * tileHeight + y0;
       throw new Error(
         `Capture is incomplete near output row ${globalY}: pixels after x=${coveredTo} are missing.`
       );
