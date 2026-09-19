@@ -159,7 +159,6 @@ jobs:
 
   publish-chrome:
     if: >-
-      github.event_name == 'push' ||
       inputs.target == 'chrome' ||
       inputs.target == 'both'
     needs: build

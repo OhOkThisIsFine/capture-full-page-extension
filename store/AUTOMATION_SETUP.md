@@ -20,10 +20,11 @@ The workflow:
 3. builds the Chrome and Firefox packages;
 4. runs Mozilla's current `web-ext lint`;
 5. creates/updates the matching GitHub Release and attaches both ZIPs;
-6. submits the Firefox package to AMO; and
-7. uploads and submits the Chrome package for review/publication.
+6. submits the Firefox package to AMO.
 
-The workflow can also be run manually from GitHub Actions with `build-only`, `chrome`, `firefox`, or `both`.
+Chrome publication is intentionally not run automatically for release tags. It remains available only as a manual workflow target if Chrome Web Store credentials are ever configured.
+
+The workflow can also be run manually from GitHub Actions with `build-only`, `firefox`, and—if ever configured—`chrome` or `both`.
 
 ## One-time GitHub configuration
 
