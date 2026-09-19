@@ -19,14 +19,48 @@ chrome.runtime.onInstalled.addListener(installMenu);
 chrome.runtime.onStartup.addListener(installMenu);
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {
-  if (info.menuItemId !== MENU_ID || !tab?.id || tab.windowId == null) return;
-  if (activeCaptures.has(tab.id)) return;
+  if (info.menuItemId !== MENU_ID) return;
+  startCapture(tab);
+});
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type !== "capture-active-tab") return;
+
+  chrome.tabs.query({ active: true, currentWindow: true })
+    .then(([tab]) => {
+      if (!tab?.id || tab.windowId == null) {
+        sendResponse({ ok: false, error: "No active tab is available to capture." });
+        return;
+      }
+
+      if (!startCapture(tab)) {
+        sendResponse({ ok: false, error: "A capture is already running for this tab." });
+        return;
+      }
+
+      sendResponse({ ok: true });
+    })
+    .catch(error => {
+      sendResponse({
+        ok: false,
+        error: error?.message || "Could not start the capture."
+      });
+    });
+
+  return true;
+});
+
+function startCapture(tab) {
+  if (!tab?.id || tab.windowId == null) return false;
+  if (activeCaptures.has(tab.id)) return false;
 
   activeCaptures.add(tab.id);
   captureFullPage(tab)
     .catch(error => console.error("Capture Full Page failed:", error))
     .finally(() => activeCaptures.delete(tab.id));
-});
+
+  return true;
+}
 
 async function captureFullPage(tab) {
   const sessionId = crypto.randomUUID();
