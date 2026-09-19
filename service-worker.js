@@ -152,6 +152,7 @@ async function captureFullPage(tab, markInitialized) {
     }
 
     await ensureOffscreen();
+    offscreenStarted = true;
     const start = await chrome.runtime.sendMessage({
       target: "cfp-offscreen",
       type: "start",
@@ -159,7 +160,6 @@ async function captureFullPage(tab, markInitialized) {
       prep
     });
     throwIfOffscreenError(start);
-    offscreenStarted = true;
 
     markInitialized();
 
@@ -365,7 +365,9 @@ async function captureVisible(tabId, windowId) {
       await assertOriginalTabActive(tabId, windowId);
       if (dataUrl) return dataUrl;
     } catch (error) {
-      if (activeCapture?.cancelReason) throw error;
+      if (activeCapture?.cancelReason) {
+        throw new Error(activeCapture.cancelReason);
+      }
       lastError = error;
     }
 
