@@ -1,34 +1,41 @@
-Capture Full Page v5.2.0
+Capture Full Page v5.3.0
 
 PURPOSE
 Capture a complete webpage as one PNG from either:
 - the right-click context menu -> Capture full page
 - the extension popup -> Capture full page
 
-WHAT CHANGED IN 5.2
+BROWSER SUPPORT
+- Chrome / Chromium: Manifest V3 service worker + offscreen compositor document.
+- Firefox 126+: Manifest V3 background document with the same compositor loaded
+  directly as a background script.
+
+The Chrome package requests activeTab rather than broad permanent host access.
+The Firefox package does the same and declares that it collects/transmits no
+data outside the extension.
+
+WHAT CHANGED IN 5.3
+- Added a Firefox Manifest V3 package without the Chrome-only offscreen
+  permission.
+- Reused the same compositor in Firefox's background-document environment.
+- Added reproducible Chrome and Firefox ZIP packaging via scripts/build.py.
+- Added CI syntax checks, Firefox web-ext linting, and packaged build artifacts.
+- Added a privacy policy, hostable privacy-policy page, and store submission
+  guides with listing text, permission justifications, and reviewer notes.
+
+CAPTURE ROBUSTNESS
 - Captures are serialized globally so multiple tabs cannot compete for
   captureVisibleTab's rate limit or compositor memory.
 - Every viewport capture is bound to the tab that started the operation.
-  Switching to another tab in the same window cancels the capture rather than
-  stitching pixels from the wrong tab.
-- Scroll advancement now detects zero-progress/clamped scrolling and fails
-  cleanly instead of looping forever. A maximum-frame guard and RPC timeout
-  provide additional protection.
+  Switching tabs in the same window cancels the capture rather than stitching
+  pixels from the wrong tab.
+- Scroll advancement detects zero-progress/clamped scrolling and fails cleanly.
 - Failed captures explicitly abort compositor sessions and release canvases.
-  The offscreen document closes when there are no sessions or download blobs.
-- The compositor validates output coverage. Missing regions now fail the
-  capture instead of being silently replaced with white pixels.
-- Tile height is chosen from a memory budget instead of always allocating
-  8192-row canvases. Extremely large outputs are rejected before exhausting
-  browser memory.
-- The webpage is restored immediately after the final viewport is captured,
-  before PNG compression/download work.
-- Unexpected content-script disconnects trigger restoration as well.
-- Capture styles are installed inside open shadow roots so transitions,
-  animations, smooth scrolling, and scroll snapping are frozen consistently.
-- Same-origin scrolling iframes are temporarily expanded so their full contents
-  can participate in the page capture.
-- The popup now reports initialization failures before it closes.
+- The compositor validates output coverage instead of fabricating white regions.
+- Tile size and total output size are bounded.
+- The webpage is restored before PNG encoding and also on unexpected disconnect.
+- Capture styles are installed inside open shadow roots.
+- Same-origin scrolling iframes are temporarily expanded when possible.
 
 APP-SHELL / NESTED-SCROLLER CAPTURE
 For large nested scrolling regions (Google Calendar-style apps), the extension
@@ -54,12 +61,34 @@ their offscreen contents would require per-frame extension injection/coordinatio
 plus host access to those frame origins. The extension deliberately does not
 request broad <all_urls> access just to bypass that boundary.
 
-INSTALL
+DEVELOPMENT INSTALL - CHROME
 1. Open chrome://extensions
 2. Enable Developer mode.
 3. Click Load unpacked.
 4. Select this repository/directory.
 5. Reload the extension after code changes.
+
+DEVELOPMENT INSTALL - FIREFOX
+1. Run: python scripts/build.py --target firefox
+2. Open about:debugging#/runtime/this-firefox
+3. Click Load Temporary Add-on.
+4. Select dist/firefox/manifest.json.
+
+BUILD STORE PACKAGES
+Run:
+
+  python scripts/build.py
+
+This creates:
+- dist/capture-full-page-chrome-5.3.0.zip
+- dist/capture-full-page-firefox-5.3.0.zip
+- dist/chrome/ and dist/firefox/ unpacked test directories
+
+STORE SUBMISSION
+- Chrome: store/CHROME_WEB_STORE.md
+- Firefox: store/FIREFOX_AMO.md
+- Privacy policy: PRIVACY.md
+- Hostable privacy page: docs/privacy.html
 
 DOWNLOAD PROMPT
 The extension uses saveAs:false. Chrome's global setting
