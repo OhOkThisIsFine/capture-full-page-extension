@@ -260,8 +260,10 @@
 
       const actualX = scroller.scrollLeft;
       const afterWidth = scroller.scrollWidth;
-      if (afterWidth < beforeWidth && actualX < desiredX - SCROLL_EPSILON) {
-        state.logicalOffsetX += beforeWidth - afterWidth;
+      if (beforeWidth - afterWidth > 4) {
+        throw new Error(
+          "The page width changed during capture, so the frozen capture boundary is no longer reliable."
+        );
       }
 
       const logicalXAfter = actualX + state.logicalOffsetX;
@@ -303,8 +305,10 @@
     const actualY = scroller.scrollTop;
     const afterHeight = scroller.scrollHeight;
 
-    if (afterHeight < beforeHeight && actualY < desiredY - SCROLL_EPSILON) {
-      state.logicalOffsetY += beforeHeight - afterHeight;
+    if (beforeHeight - afterHeight > 4) {
+      throw new Error(
+        "The page height changed during capture, so the frozen capture boundary is no longer reliable."
+      );
     }
 
     const logicalYAfter = actualY + state.logicalOffsetY;
