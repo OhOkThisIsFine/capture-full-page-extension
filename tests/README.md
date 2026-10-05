@@ -2,6 +2,23 @@
 
 These fixtures exercise the capture paths that have historically been fragile.
 
+## Automated reliability checks
+
+Run `node --test tests/*.test.cjs`. The dependency-free VM harness executes the
+repository's content and compositor functions with controlled layout and
+asynchronous browser primitives. It covers interrupted nested preparation,
+old continuations after replacement sessions, iframe scroll restoration and
+navigation, short viewport coverage across columns and fractional bitmap scales,
+cancelled tile/finish operations, owner recovery preserving completed URLs, and
+a known PNG chunk CRC. The build workflow runs these checks.
+
+These tests model layout and verify coverage; they do not establish browser
+pixel fidelity, sticky-header appearance, iframe border-box completeness,
+real worker termination behavior, or peak encoding memory. Real Chrome and
+Firefox fixture QA remains required. No browser extension was installed for
+this repair batch. The small CRC change removes one temporary chunk allocation;
+it does not establish a safe peak-memory budget.
+
 ## Run
 
 Serve the repository over HTTP, for example:

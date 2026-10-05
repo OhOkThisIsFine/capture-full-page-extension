@@ -22,8 +22,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 async function handle(message) {
   switch (message.type) {
     case "start":
+      // A replacement worker owns no unfinished work from the previous worker.
+      // Completed URLs have a separate download lifetime and are left alone.
+      if (message.owner) {
+        for (const [id, session] of sessions) {
+          if (session.owner !== message.owner) cleanupSession(id);
+        }
+      }
       cleanupSession(message.sessionId);
-      sessions.set(message.sessionId, createSession(message.prep));
+      sessions.set(message.sessionId, createSession(message.prep, message.owner));
+      renewSession(message.sessionId);
       return { ok: true };
     case "frame":
       return addFrame(message);
@@ -43,9 +51,12 @@ async function handle(message) {
   }
 }
 
-function createSession(prep) {
+function createSession(prep, owner) {
   return {
     prep,
+    owner,
+    cancelled: false,
+    controller: new AbortController(),
     ratioX: null,
     ratioY: null,
     widthPx: null,
@@ -58,15 +69,37 @@ function createSession(prep) {
   };
 }
 
+function renewSession(id, encoding = false) {
+  const s = sessions.get(id);
+  if (!s) return;
+  clearTimeout(s.deadline);
+  s.deadline = setTimeout(() => {
+    if (sessions.get(id) !== s) return;
+    cleanupSession(id);
+    if (isIdle()) chrome.runtime.sendMessage({
+      target: "cfp-worker", type: "offscreen-idle"
+    }).catch(() => {});
+  }, encoding ? 10 * 60 * 1000 : 5 * 60 * 1000);
+}
+
+function checkSession(s) {
+  if (s.cancelled || ![...sessions.values()].includes(s)) throw new Error("Capture session was cancelled.");
+}
+
 async function addFrame(message) {
   const s = sessions.get(message.sessionId);
   if (!s) throw new Error("Unknown capture session.");
+  renewSession(message.sessionId);
 
-  const response = await fetch(message.dataUrl);
+  const response = await fetch(message.dataUrl, { signal: s.controller.signal });
   if (!response.ok) throw new Error("Could not read captured frame.");
-  const bitmap = await createImageBitmap(await response.blob());
+  checkSession(s);
+  const blob = await response.blob();
+  checkSession(s);
+  const bitmap = await createImageBitmap(blob);
 
   try {
+    checkSession(s);
     if (s.ratioX == null) initializeGeometry(s, bitmap);
 
     const p = message.position;
@@ -99,6 +132,7 @@ async function addFrame(message) {
     }
 
     await finalizeTilesBefore(s, destY);
+    checkSession(s);
     drawAcrossTiles(s, bitmap, sx, sy, sw, sh, destX, destY);
 
     s.lastDestY = Math.max(s.lastDestY, destY);
@@ -204,6 +238,7 @@ async function finalizeTile(s, index) {
   if (!tile) return;
 
   const blob = await tile.canvas.convertToBlob({ type: "image/png" });
+  checkSession(s);
   s.savedTiles.set(index, {
     blob,
     height: tile.height,
@@ -219,6 +254,7 @@ async function finalizeTile(s, index) {
 async function finish(sessionId) {
   const s = sessions.get(sessionId);
   if (!s) throw new Error("Unknown capture session.");
+  renewSession(sessionId, true);
   if (!s.frames || s.ratioX == null) throw new Error("No screenshot frames were captured.");
 
   const activeIndexes = [...s.activeTiles.keys()].sort((a, b) => a - b);
@@ -234,6 +270,7 @@ async function finish(sessionId) {
   }
 
   const pngBlob = await encodePngFromTiles(s);
+  checkSession(s);
   const url = URL.createObjectURL(pngBlob);
   blobUrls.add(url);
   sessionUrls.set(sessionId, url);
@@ -307,6 +344,9 @@ function cleanupSession(sessionId) {
   const s = sessions.get(sessionId);
   if (!s) return;
 
+  s.cancelled = true;
+  clearTimeout(s.deadline);
+  s.controller.abort();
   for (const tile of s.activeTiles.values()) {
     try {
       tile.canvas.width = 1;
@@ -330,9 +370,9 @@ async function encodePngFromTiles(s) {
   }
 
   const tileEntries = [...s.savedTiles.entries()].sort((a, b) => a[0] - b[0]);
-  const scanlines = makeScanlineStream(s.widthPx, tileEntries);
+  const scanlines = makeScanlineStream(s.widthPx, tileEntries, s);
   const compressed = await new Response(
-    scanlines.pipeThrough(new CompressionStream("deflate"))
+    scanlines.pipeThrough(new CompressionStream("deflate"), { signal: s.controller.signal })
   ).arrayBuffer();
 
   const ihdr = new Uint8Array(13);
@@ -353,7 +393,7 @@ async function encodePngFromTiles(s) {
   ], { type: "image/png" });
 }
 
-function makeScanlineStream(width, tileEntries) {
+function makeScanlineStream(width, tileEntries, s) {
   let tileCursor = 0;
   let bitmap = null;
   let canvas = null;
@@ -363,6 +403,7 @@ function makeScanlineStream(width, tileEntries) {
 
   return new ReadableStream({
     async pull(controller) {
+      checkSession(s);
       if (!bitmap) {
         if (tileCursor >= tileEntries.length) {
           controller.close();
@@ -370,7 +411,9 @@ function makeScanlineStream(width, tileEntries) {
         }
 
         const [, tile] = tileEntries[tileCursor];
-        bitmap = await createImageBitmap(tile.blob);
+        const decoded = await createImageBitmap(tile.blob);
+        if (s.cancelled) { decoded.close(); checkSession(s); }
+        bitmap = decoded;
         tileHeight = tile.height;
         canvas = new OffscreenCanvas(width, tileHeight);
         ctx = canvas.getContext("2d", { alpha: false, willReadFrequently: true });
@@ -405,6 +448,9 @@ function makeScanlineStream(width, tileEntries) {
     },
     cancel() {
       bitmap?.close();
+      bitmap = null;
+      if (canvas) { canvas.width = 1; canvas.height = 1; }
+      tileEntries.length = 0;
     }
   });
 }
@@ -417,10 +463,7 @@ function pngChunk(type, data) {
   out.set(typeBytes, 4);
   out.set(data, 8);
 
-  const crcInput = new Uint8Array(typeBytes.length + data.length);
-  crcInput.set(typeBytes, 0);
-  crcInput.set(data, typeBytes.length);
-  view.setUint32(8 + data.length, crc32(crcInput), false);
+  view.setUint32(8 + data.length, crc32(out.subarray(4, 8 + data.length)), false);
   return out;
 }
 

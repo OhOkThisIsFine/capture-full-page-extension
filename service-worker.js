@@ -3,6 +3,7 @@ const OFFSCREEN_URL = "offscreen.html";
 const CAPTURE_DELAY_MS = 560;
 const MAX_CAPTURE_FRAMES = 20000;
 const RPC_TIMEOUT_MS = 15000;
+const compositorOwner = crypto.randomUUID();
 
 let activeCapture = null;
 let offscreenCreation = null;
@@ -382,10 +383,19 @@ function hasSharedCompositor() {
 }
 
 async function callCompositor(message) {
-  if (hasSharedCompositor()) {
-    return globalThis.__cfpCompositorHandle(message);
+  if (message.type === "start") message = { ...message, owner: compositorOwner };
+  let timer;
+  try {
+    const operation = hasSharedCompositor()
+      ? globalThis.__cfpCompositorHandle(message)
+      : chrome.runtime.sendMessage(message);
+    return await Promise.race([operation, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error("Compositor operation timed out.")),
+        message.type === "finish" ? 10 * 60 * 1000 : 60 * 1000);
+    })]);
+  } finally {
+    clearTimeout(timer);
   }
-  return chrome.runtime.sendMessage(message);
 }
 
 async function ensureOffscreen() {
