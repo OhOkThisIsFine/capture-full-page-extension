@@ -712,12 +712,23 @@
       }
       saved.push({ el, props, frameDocument, root, left: root.scrollLeft, top: root.scrollTop });
 
+      // A border-box CSS size includes decorations outside the iframe's inner
+      // browsing viewport. Preserve room for the frozen content dimensions.
+      const frameStyle = getComputedStyle(el);
+      const decoration = (...properties) => properties.reduce(
+        (total, property) => total + (parseFloat(frameStyle[property]) || 0), 0
+      );
+      const extraWidth = frameStyle.boxSizing === "border-box"
+        ? decoration("borderLeftWidth", "borderRightWidth", "paddingLeft", "paddingRight") : 0;
+      const extraHeight = frameStyle.boxSizing === "border-box"
+        ? decoration("borderTopWidth", "borderBottomWidth", "paddingTop", "paddingBottom") : 0;
+
       if (needsWidth) {
-        el.style.setProperty("width", `${Math.ceil(contentWidth)}px`, "important");
+        el.style.setProperty("width", `${Math.ceil(contentWidth + extraWidth)}px`, "important");
         el.style.setProperty("max-width", "none", "important");
       }
       if (needsHeight) {
-        el.style.setProperty("height", `${Math.ceil(contentHeight)}px`, "important");
+        el.style.setProperty("height", `${Math.ceil(contentHeight + extraHeight)}px`, "important");
         el.style.setProperty("max-height", "none", "important");
       }
 
