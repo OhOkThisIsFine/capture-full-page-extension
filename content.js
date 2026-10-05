@@ -13,19 +13,22 @@
   chrome.runtime.onConnect.addListener(port => {
     if (!port.name.startsWith("cfp:")) return;
 
-    const onMessage = async message => {
+    const owner = { cancelled: false, context: null };
+    let commands = Promise.resolve();
+    const dispatch = async message => {
       if (!message || message.id == null || !message.method) return;
       try {
         let result;
         switch (message.method) {
           case "prepare":
-            result = await prepare();
+            result = await prepare(owner);
             break;
           case "advance":
+            checkOwner(owner.context);
             result = await advance();
             break;
           case "restore":
-            result = await restore();
+            result = await restore(owner.context);
             break;
           default:
             throw new Error(`Unknown capture command: ${message.method}`);
@@ -39,20 +42,40 @@
       }
     };
 
-    port.onMessage.addListener(onMessage);
+    port.onMessage.addListener(message => {
+      commands = commands.then(() => dispatch(message)).catch(() => {});
+    });
     port.onDisconnect.addListener(() => {
-      restore().catch(() => {});
+      owner.cancelled = true;
+      restore(owner.context).catch(() => {});
     });
   });
 
-  async function prepare() {
-    if (state) await restore();
+  function checkOwner(context) {
+    if (!context || context.cancelled || context.owner.cancelled || state !== context) {
+      throw new Error("Capture session was cancelled.");
+    }
+  }
+
+  async function prepare(owner = { cancelled: false }) {
+    if (state) restore(state);
+    if (owner.cancelled) throw new Error("Capture session was cancelled.");
+    const context = { owner, cancelled: false, rollback: [], scrollRollback: [], hidden: new Map(), changedStyles: [] };
+    owner.context = context;
+    state = context;
+    try {
 
     const documentScroller = document.scrollingElement || document.documentElement;
     const documentOriginal = {
       left: documentScroller.scrollLeft,
       top: documentScroller.scrollTop
     };
+
+    context.scrollRollback.push(() => {
+      documentScroller.scrollLeft = documentOriginal.left;
+      documentScroller.scrollTop = documentOriginal.top;
+    });
+    snapshotIframeScroll(context);
 
     const initialDocumentWidth = Math.max(
       documentScroller.scrollWidth,
@@ -90,12 +113,19 @@
         clientHeight: Math.max(scroller.clientHeight, 1)
       };
 
+      const nested = scroller;
+      context.scrollRollback.push(() => {
+        nested.scrollLeft = nestedOriginal.left;
+        nested.scrollTop = nestedOriginal.top;
+      });
       scroller.scrollLeft = 0;
       scroller.scrollTop = 0;
       await settle();
+      checkOwner(context);
 
-      const unlock = unlockScrollableElement(scroller, frozenNested);
+      const unlock = unlockScrollableElement(scroller, frozenNested, context);
       await settle();
+      checkOwner(context);
 
       const expandedDocumentWidth = Math.max(
         documentScroller.scrollWidth,
@@ -155,6 +185,7 @@
         scroller.scrollLeft = nestedOriginal.left;
         scroller.scrollTop = nestedOriginal.top;
         await settle();
+      checkOwner(context);
 
         var frozenTargetWidth = Math.max(scroller.scrollWidth, scroller.clientWidth, 1);
         var frozenTargetHeight = Math.max(scroller.scrollHeight, scroller.clientHeight, 1);
@@ -164,9 +195,10 @@
       var frozenTargetHeight = Math.max(scroller.scrollHeight, scroller.clientHeight, 1);
     }
 
-    const iframeExpansion = expandSameOriginIframes(isDocument ? null : scroller);
+    const iframeExpansion = expandSameOriginIframes(isDocument ? null : scroller, context);
     if (iframeExpansion.count > 0) {
       await settle();
+      checkOwner(context);
 
       if (isDocument) {
         frozenTargetWidth = Math.max(
@@ -195,9 +227,9 @@
 
     const originalScrollLeft = scroller.scrollLeft;
     const originalScrollTop = scroller.scrollTop;
-    const captureStyles = installCaptureStyles();
+    const captureStyles = installCaptureStyles(context);
 
-    state = {
+    Object.assign(context, {
       scroller,
       isDocument,
       captureStyles,
@@ -218,45 +250,53 @@
       changedStyles: [],
       tracked: new WeakMap(),
       frameIndex: 0
-    };
+    });
 
     neutralizeFixedBackgrounds();
 
     scroller.scrollLeft = 0;
     scroller.scrollTop = 0;
     await settle();
+      checkOwner(context);
 
-    state.currentX = scroller.scrollLeft;
-    state.currentY = scroller.scrollTop;
+    context.currentX = scroller.scrollLeft;
+    context.currentY = scroller.scrollTop;
     snapshotVisibleElements();
 
     return {
       windowWidth: window.innerWidth,
       windowHeight: window.innerHeight,
-      targetWidth: state.targetWidth,
-      targetHeight: state.targetHeight,
+      targetWidth: context.targetWidth,
+      targetHeight: context.targetHeight,
       scrollerType: nestedExpansion ? "expanded-nested" : (isDocument ? "document" : "element"),
       position: currentPosition(false)
     };
+    } catch (error) {
+      await restore(context);
+      throw error;
+    }
   }
 
   async function advance() {
+    const context = state;
+    checkOwner(context);
     if (!state) throw new Error("Capture has not been initialized.");
 
-    const { scroller } = state;
+    const { scroller } = context;
     const viewport = getViewportMetrics();
-    const maxX = Math.max(0, state.targetWidth - viewport.clientWidth);
-    const maxY = Math.max(0, state.targetHeight - viewport.clientHeight);
-    const logicalXBefore = state.currentX + state.logicalOffsetX;
+    const maxX = Math.max(0, context.targetWidth - viewport.clientWidth);
+    const maxY = Math.max(0, context.targetHeight - viewport.clientHeight);
+    const logicalXBefore = context.currentX + context.logicalOffsetX;
 
     if (logicalXBefore < maxX - SCROLL_EPSILON) {
       const stepX = Math.max(1, viewport.clientWidth - HORIZONTAL_OVERLAP);
       const desiredLogicalX = Math.min(maxX, logicalXBefore + stepX);
-      const desiredX = Math.max(0, desiredLogicalX - state.logicalOffsetX);
+      const desiredX = Math.max(0, desiredLogicalX - context.logicalOffsetX);
       const beforeWidth = scroller.scrollWidth;
 
       scroller.scrollLeft = desiredX;
       await settle();
+      checkOwner(context);
 
       const actualX = scroller.scrollLeft;
       const afterWidth = scroller.scrollWidth;
@@ -266,40 +306,38 @@
         );
       }
 
-      const logicalXAfter = actualX + state.logicalOffsetX;
+      const logicalXAfter = actualX + context.logicalOffsetX;
       if (logicalXAfter <= logicalXBefore + SCROLL_EPSILON) {
         throw new Error(
           `Horizontal scrolling stopped at ${Math.round(logicalXBefore)}px before the frozen capture boundary.`
         );
       }
 
-      state.currentX = actualX;
+      context.currentX = actualX;
       suppressViewportAnchoredElements(true);
-      state.frameIndex += 1;
+      context.frameIndex += 1;
 
       return { done: false, position: currentPosition(false) };
     }
 
-    const logicalYBefore = state.currentY + state.logicalOffsetY;
+    const logicalYBefore = context.currentY + context.logicalOffsetY;
     if (logicalYBefore >= maxY - SCROLL_EPSILON) {
       return { done: true };
     }
 
-    const first = state.firstVerticalMove;
-    let stepY = viewport.clientHeight - (first ? FIRST_VERTICAL_OVERLAP : VERTICAL_OVERLAP);
-    if (stepY <= 0) {
-      stepY = Math.max(1, viewport.clientHeight - (first ? STICKY_CROP : 40));
-    }
+    const first = context.firstVerticalMove;
+    const { stride: stepY } = verticalGeometry(viewport.clientHeight, first);
 
     const desiredLogicalY = Math.min(maxY, logicalYBefore + stepY);
-    const desiredY = Math.max(0, desiredLogicalY - state.logicalOffsetY);
+    const desiredY = Math.max(0, desiredLogicalY - context.logicalOffsetY);
     const beforeHeight = scroller.scrollHeight;
 
     // A new row always starts at the physical/logical left edge.
-    state.logicalOffsetX = 0;
+    context.logicalOffsetX = 0;
     scroller.scrollLeft = 0;
     scroller.scrollTop = desiredY;
     await settle();
+      checkOwner(context);
 
     const actualX = scroller.scrollLeft;
     const actualY = scroller.scrollTop;
@@ -311,21 +349,28 @@
       );
     }
 
-    const logicalYAfter = actualY + state.logicalOffsetY;
+    const logicalYAfter = actualY + context.logicalOffsetY;
     if (logicalYAfter <= logicalYBefore + SCROLL_EPSILON) {
       throw new Error(
         `Vertical scrolling stopped at ${Math.round(logicalYBefore)}px before the frozen capture boundary.`
       );
     }
 
-    state.currentX = actualX;
-    state.currentY = actualY;
-    state.firstVerticalMove = false;
+    context.currentX = actualX;
+    context.currentY = actualY;
+    context.firstVerticalMove = false;
 
     suppressViewportAnchoredElements(false);
-    state.frameIndex += 1;
+    context.frameIndex += 1;
 
     return { done: false, position: currentPosition(true) };
+  }
+
+  function verticalGeometry(height, first) {
+    const crop = Math.min(STICKY_CROP, Math.floor(height / 2));
+    const overlap = Math.min(first ? FIRST_VERTICAL_OVERLAP : VERTICAL_OVERLAP,
+      Math.max(crop + 1, Math.floor(height / 2) + 1));
+    return { crop, stride: Math.max(1, height - overlap) };
   }
 
   function currentPosition(afterVerticalMove) {
@@ -340,7 +385,7 @@
       clientWidth: viewport.clientWidth,
       clientHeight: viewport.clientHeight,
       stickyCrop:
-        state.currentY + state.logicalOffsetY > 0 || afterVerticalMove ? STICKY_CROP : 0
+        state.currentY + state.logicalOffsetY > 0 || afterVerticalMove ? verticalGeometry(viewport.clientHeight, false).crop : 0
     };
   }
 
@@ -428,8 +473,16 @@
   // Based on FireShot's scroll-container unlocking strategy: preserve every
   // changed inline style, relax overflow/height constraints on the target and
   // its ancestors, and account for flex/grid/positioned layouts.
-  function unlockScrollableElement(target, frozen) {
+  function unlockScrollableElement(target, frozen, context) {
     const saved = new Map();
+
+    const restore = () => {
+      for (const [node, props] of [...saved.entries()].reverse()) {
+        for (const [prop, value] of Object.entries(props)) restoreProperty(node, prop, value.value, value.priority);
+      }
+      saved.clear();
+    };
+    context?.rollback.push(restore);
 
     function save(el) {
       if (saved.has(el)) return;
@@ -535,7 +588,7 @@
     };
   }
 
-  function installCaptureStyles() {
+  function installCaptureStyles(context) {
     const css = `
       *, *::before, *::after {
         transition: none !important;
@@ -551,8 +604,9 @@
         const style = document.createElement("style");
         style.setAttribute("data-cfp-capture-style", "");
         style.textContent = css;
-        root.appendChild(style);
+        context?.rollback.push(() => style.remove());
         styles.push(style);
+        root.appendChild(style);
       } catch {}
     };
 
@@ -565,8 +619,45 @@
     return styles;
   }
 
-  function expandSameOriginIframes(scopeScroller) {
+  function snapshotIframeScroll(context) {
+    for (const el of allElements(document.documentElement)) {
+      if (!(el instanceof HTMLIFrameElement)) continue;
+      try {
+        const frameDocument = el.contentDocument;
+        if (!frameDocument) continue;
+        void frameDocument.location.href;
+        const root = frameDocument.scrollingElement || frameDocument.documentElement;
+        if (!root) continue;
+        const left = root.scrollLeft, top = root.scrollTop;
+        context.scrollRollback.push(() => {
+          if (el.contentDocument !== frameDocument) return;
+          root.scrollLeft = left;
+          root.scrollTop = top;
+        });
+      } catch {}
+    }
+  }
+
+  function expandSameOriginIframes(scopeScroller, context) {
     const saved = [];
+    const rollback = () => {
+      for (const {el, props} of [...saved].reverse()) {
+        for (const [prop, value] of Object.entries(props)) restoreProperty(el, prop, value.value, value.priority);
+      }
+    };
+    const restoreScroll = () => {
+      for (const {el, frameDocument, root, left, top} of [...saved].reverse()) {
+        try {
+          if (el.contentDocument === frameDocument) {
+            root.scrollLeft = left;
+            root.scrollTop = top;
+          }
+        } catch {}
+      }
+      saved.length = 0;
+    };
+    context?.rollback.push(rollback);
+    if (context) (context.scrollRollback ||= []).push(restoreScroll);
     let count = 0;
     let blocked = 0;
 
@@ -619,7 +710,7 @@
           priority: el.style.getPropertyPriority(prop)
         };
       }
-      saved.push({ el, props });
+      saved.push({ el, props, frameDocument, root, left: root.scrollLeft, top: root.scrollTop });
 
       if (needsWidth) {
         el.style.setProperty("width", `${Math.ceil(contentWidth)}px`, "important");
@@ -636,16 +727,7 @@
     return {
       count,
       blocked,
-      restore() {
-        for (let i = saved.length - 1; i >= 0; i -= 1) {
-          const { el, props } = saved[i];
-          if (!el?.style) continue;
-          for (const [prop, savedValue] of Object.entries(props)) {
-            restoreProperty(el, prop, savedValue.value, savedValue.priority);
-          }
-        }
-        saved.length = 0;
-      }
+      restore() { rollback(); restoreScroll(); }
     };
   }
 
@@ -790,41 +872,26 @@
     }
   }
 
-  async function restore() {
-    if (!state) return true;
-    const old = state;
-    state = null;
-
+  async function restore(old = state) {
+    if (!old || old.cancelled) return true;
+    old.cancelled = true;
+    if (state === old) state = null;
     for (const [el, saved] of old.hidden) {
       restoreProperty(el, "opacity", saved.opacity, saved.opacityPriority);
       restoreProperty(el, "animation", saved.animation, saved.animationPriority);
       restoreProperty(el, "transition-duration", saved.transitionDuration, saved.transitionPriority);
     }
-
-    for (const item of old.changedStyles) {
-      restoreProperty(item.el, item.property, item.value, item.priority);
+    for (const item of old.changedStyles) restoreProperty(item.el, item.property, item.value, item.priority);
+    for (const undo of old.rollback.reverse()) {
+      try { undo(); } catch {}
     }
-
-    for (const style of old.captureStyles || []) {
-      style?.remove();
+    old.rollback.length = 0;
+    // Restore offsets only after every expanded dimension has been collapsed.
+    // Setting scroll offsets forces layout using the restored dimensions.
+    for (const undo of old.scrollRollback.reverse()) {
+      try { undo(); } catch {}
     }
-
-    old.iframeExpansion?.restore();
-
-    if (old.nestedExpansion) {
-      // Collapse the app back to its original layout first, then restore both
-      // the inner scroller and document positions.
-      old.nestedExpansion.restoreStyles();
-      old.nestedExpansion.element.scrollLeft = old.nestedExpansion.original.left;
-      old.nestedExpansion.element.scrollTop = old.nestedExpansion.original.top;
-      old.documentScroller.scrollLeft = old.documentOriginal.left;
-      old.documentScroller.scrollTop = old.documentOriginal.top;
-    } else {
-      old.scroller.scrollLeft = old.originalScrollLeft;
-      old.scroller.scrollTop = old.originalScrollTop;
-    }
-
-    await settle();
+    old.scrollRollback.length = 0;
     return true;
   }
 
@@ -835,7 +902,10 @@
   }
 
   async function settle() {
-    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    await new Promise(resolve => {
+      const timer = setTimeout(resolve, 1000);
+      requestAnimationFrame(() => requestAnimationFrame(() => { clearTimeout(timer); resolve(); }));
+    });
     await new Promise(resolve => setTimeout(resolve, 120));
   }
 })();
