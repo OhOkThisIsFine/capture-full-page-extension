@@ -13,11 +13,47 @@ cancelled tile/finish operations, owner recovery preserving completed URLs, and
 a known PNG chunk CRC. The build workflow runs these checks.
 
 These tests model layout and verify coverage; they do not establish browser
-pixel fidelity, sticky-header appearance, iframe border-box completeness,
+pixel fidelity, sticky-header appearance, general iframe completeness,
 real worker termination behavior, or peak encoding memory. Real Chrome and
 Firefox fixture QA remains required. No browser extension was installed for
-this repair batch. The small CRC change removes one temporary chunk allocation;
+the initial repair batch. The small CRC change removes one temporary chunk allocation;
 it does not establish a safe peak-memory budget.
+
+## Optional isolated browser QA
+
+`node tests/browser-layout.cjs` uses existing Playwright and a temporary Chromium
+profile. It loads the unpacked source only in that temporary profile, serves
+synthetic pages on loopback, and exercises production content functions against
+real DOM layout. Runtime registration and settle waits use explicit test seams.
+It checks short viewport traversal, interruption before/after nested unlocking,
+old preparation released after a new session, and iframe box-model sizing and
+scroll restoration. Tested on Chromium 148.0.7778.96.
+
+`node tests/browser-png.cjs` uses existing Playwright and pngjs in temporary
+headless browser profiles. It evaluates the production content/compositor
+functions with runtime registration and settle seams, feeds actual browser
+screenshots into the compositor, and independently decodes PNGs. It checks all
+colored rows at viewport heights 100, 180, 190 and 191, repeated capture equality,
+both iframe edge sentinels, scroll restoration, and cancellation after a real
+encode. Tested on Chrome 154.0.8037.98. Border-box frames with 8px borders now
+expose the complete frozen 500x600 content viewport in this fixture.
+
+Set `PLAYWRIGHT_MODULE`, `PNGJS_MODULE` (PNG suite only), and
+`CFP_CHROMIUM_EXECUTABLE` to already-installed tooling when normal module/browser
+resolution is unavailable. Optional `CFP_QA_REPORT` writes the layout report;
+`CFP_QA_OUTPUT` chooses the PNG/report output directory. Profiles are deleted
+after each run. These optional suites do not install dependencies or touch a
+personal browser profile, and are not part of the dependency-free CI command.
+
+These checks do not establish the user-action/activeTab grant, captureVisibleTab,
+browser-managed downloads, real worker termination, render-wait timing, Firefox
+behavior, sticky-header fidelity, arbitrary responsive iframe completeness or
+peak memory. In the permitted headless extension probe,
+`Extensions.triggerAction` returned `Method not allowed`; opening the popup
+programmatically did not grant activeTab and capture correctly rejected access.
+No unsafe extension-debugging flags or permission overrides were used. Bundled
+Chromium's screenshot API timed out; installed Chrome produced the verified
+fixture PNGs through the production compositor harness.
 
 ## Run
 

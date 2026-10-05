@@ -6,8 +6,8 @@ const deferred = () => { let resolve; const promise = new Promise(r => resolve =
 function content() {
   const waits = [];
   const root = {scrollLeft: 17, scrollTop: 23, scrollWidth: 200, scrollHeight: 2000, clientWidth: 200, clientHeight: 180};
-  const c = vm.createContext({HTMLIFrameElement:class {},window:{innerWidth:200,innerHeight:180}, document:{scrollingElement:root,documentElement:root},chrome:{runtime:{onConnect:{addListener(){}}}},console,setTimeout,clearTimeout});
-  let source = fs.readFileSync('content.js','utf8');
+  const c = vm.createContext({getComputedStyle:()=>({boxSizing:'content-box'}),HTMLIFrameElement:class {},window:{innerWidth:200,innerHeight:180}, document:{scrollingElement:root,documentElement:root},chrome:{runtime:{onConnect:{addListener(){}}}},console,setTimeout,clearTimeout});
+  let source = fs.readFileSync(process.env.CFP_CONTENT_FILE||'content.js','utf8');
   source = source.replace(/\}\)\(\);\s*$/, `globalThis.api = {prepare, advance, restore, currentPosition, getState:()=>state, setDetector:fn=>detectPrimaryScroller=fn, expandFrames:expandSameOriginIframes};
     allElements=function*(){yield* globalThis.elements;};
     detectPrimaryScroller = () => document.scrollingElement;
@@ -150,9 +150,13 @@ test('iframe rollback restores styles and internal scroll only for original docu
     getBoundingClientRect(){return {width:100,height:100};}
   }
   c.HTMLIFrameElement=Frame;
-  for(const navigated of [false,true]) {
+  for(const navigated of [false,true]) for(const borderBox of [false,true]) {
+    c.getComputedStyle=()=>({boxSizing:borderBox?'border-box':'content-box',borderLeftWidth:'8px',borderRightWidth:'8px',borderTopWidth:'8px',borderBottomWidth:'8px',paddingLeft:'2px',paddingRight:'2px',paddingTop:'2px',paddingBottom:'2px'});
     const frame=new Frame();c.elements=[frame];const doc=frame.contentDocument,root=doc.scrollingElement,before=JSON.stringify([...frame.props]);
-    const expansion=api.expandFrames(null,{rollback:[]});root.scrollLeft=0;root.scrollTop=0;
+    const expansion=api.expandFrames(null,{rollback:[]});
+    assert.equal(frame.style.getPropertyValue('width'),borderBox?'320px':'300px');
+    assert.equal(frame.style.getPropertyValue('height'),borderBox?'420px':'400px');
+    root.scrollLeft=0;root.scrollTop=0;
     if(navigated)frame.contentDocument={};
     expansion.restore();assert.equal(JSON.stringify([...frame.props]),before);
     assert.equal(root.scrollTop,navigated?0:34);assert.equal(root.scrollLeft,navigated?0:12);
