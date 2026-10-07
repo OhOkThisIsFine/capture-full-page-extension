@@ -200,7 +200,7 @@ browserTask(
     );
     await page.evaluate(source);
     const childPrep = await page.evaluate(() => qa.prepare());
-    const childRotation = await page.evaluate((p) => {
+    const childRotation = await page.evaluate(async (p) => {
       const frame = document.querySelector("#child-test");
       frame.contentDocument.documentElement.style.rotate = "180deg";
       const spec = __cfpProtocol.nextFrameSpec(
@@ -208,7 +208,7 @@ browserTask(
         null,
       );
       try {
-        qa.snapshot(qa.getState(), spec);
+        await qa.snapshot(qa.getState(), spec);
         return "accepted";
       } catch (error) {
         return error.code;
