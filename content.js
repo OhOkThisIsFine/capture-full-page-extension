@@ -1,54 +1,40 @@
 (() => {
   if (window.__cfpFireStyleInstalled) return;
+  const P = globalThis.__cfpProtocol;
+  if (!P || P.protocolVersion !== 1) throw new Error("Capture protocol unavailable.");
   window.__cfpFireStyleInstalled = true;
-
-  const STICKY_CROP = 150;
-  const FIRST_VERTICAL_OVERLAP = 300;
-  const VERTICAL_OVERLAP = 190;
-  const HORIZONTAL_OVERLAP = 30;
-  const SCROLL_EPSILON = 0.5;
-
+  const documentNonce = crypto.randomUUID();
   let state = null;
 
   chrome.runtime.onConnect.addListener(port => {
     if (!port.name.startsWith("cfp:")) return;
-
-    const owner = { cancelled: false, context: null };
-    let commands = Promise.resolve();
+    const owner = {cancelled:false,context:null};
+    let commands = Promise.resolve(), identity = null, lastId = 0;
     const dispatch = async message => {
-      if (!message || message.id == null || !message.method) return;
+      const fields = ["operationId","sessionId","owner"];
+      if (!message || message.protocolVersion !== 1 || !Number.isSafeInteger(message.id) || message.id<=lastId || fields.some(k=>!P.uuid(message[k]))) return;
+      if (!identity) {
+        if (message.method !== "prepare" || port.name !== `cfp:${message.sessionId}`) return;
+        identity = Object.fromEntries(fields.map(k=>[k,message[k]]));
+      }
+      if (fields.some(k=>message[k] !== identity[k])) return;
+      lastId = message.id;
+      const reply = {replyTo:message.id,protocolVersion:1,...identity};
       try {
         let result;
-        switch (message.method) {
-          case "prepare":
-            result = await prepare(owner);
-            break;
-          case "advance":
-            checkOwner(owner.context);
-            result = await advance();
-            break;
-          case "restore":
-            result = await restore(owner.context);
-            break;
-          default:
-            throw new Error(`Unknown capture command: ${message.method}`);
+        switch(message.method) {
+          case "prepare": result = await prepare(owner,identity); break;
+          case "position": result = await moveTo(owner.context,message.payload); break;
+          case "snapshot": result = snapshot(owner.context,message.payload); break;
+          case "restore": result = await restore(owner.context); break;
+          case "cancel": owner.cancelled=true; result = await restore(owner.context); break;
+          default: throw P.fault("INVALID_COMMAND","Unknown capture command.");
         }
-        port.postMessage({ replyTo: message.id, result });
-      } catch (error) {
-        port.postMessage({
-          replyTo: message.id,
-          error: String(error?.message || error)
-        });
-      }
+        port.postMessage({...reply,result});
+      } catch(error) { port.postMessage({...reply,code:error.code || "CAPTURE_FAILED",error:String(error?.message || error)}); }
     };
-
-    port.onMessage.addListener(message => {
-      commands = commands.then(() => dispatch(message)).catch(() => {});
-    });
-    port.onDisconnect.addListener(() => {
-      owner.cancelled = true;
-      restore(owner.context).catch(() => {});
-    });
+    port.onMessage.addListener(message => { commands=commands.then(()=>dispatch(message)).catch(()=>{}); });
+    port.onDisconnect.addListener(()=>{owner.cancelled=true;restore(owner.context).catch(()=>{});});
   });
 
   function checkOwner(context) {
@@ -57,23 +43,23 @@
     }
   }
 
-  async function prepare(owner = { cancelled: false }) {
+  async function prepare(owner = { cancelled: false }, identity = {operationId:crypto.randomUUID(),sessionId:crypto.randomUUID(),owner:crypto.randomUUID()}) {
     if (state) restore(state);
     if (owner.cancelled) throw new Error("Capture session was cancelled.");
-    const context = { owner, cancelled: false, rollback: [], scrollRollback: [], hidden: new Map(), changedStyles: [] };
+    const context = { owner, identity, planId:crypto.randomUUID(), cancelled: false, rollback: [], scrollRollback: [], hidden: new Map(), changedStyles: [], ownedStyles:[], roots:new WeakSet(), effects:new WeakSet(), listeners:[], observers:[], warnings:new Set(), scrollEpoch:0,geometryEpoch:0,geometryGeneration:0 };
     owner.context = context;
     state = context;
     try {
 
-    const documentScroller = document.scrollingElement || document.documentElement;
+    const documentScroller = measureDocument(document).scroller;
     const documentOriginal = {
-      left: documentScroller.scrollLeft,
-      top: documentScroller.scrollTop
+      left: document.scrollingElement ? documentScroller.scrollLeft : window.scrollX,
+      top: document.scrollingElement ? documentScroller.scrollTop : window.scrollY
     };
 
     context.scrollRollback.push(() => {
-      documentScroller.scrollLeft = documentOriginal.left;
-      documentScroller.scrollTop = documentOriginal.top;
+      if(!document.scrollingElement)window.scrollTo(documentOriginal.left,documentOriginal.top);
+      else {documentScroller.scrollLeft = documentOriginal.left;documentScroller.scrollTop = documentOriginal.top;}
     });
     snapshotIframeScroll(context);
 
@@ -254,161 +240,106 @@
 
     neutralizeFixedBackgrounds();
 
-    scroller.scrollLeft = 0;
-    scroller.scrollTop = 0;
+    assertSupportedMapping(context);
+    writeLogicalScroll(context,0,0);
     await settle();
-      checkOwner(context);
-
-    context.currentX = scroller.scrollLeft;
-    context.currentY = scroller.scrollTop;
+    checkOwner(context);
     snapshotVisibleElements();
-
-    return {
-      windowWidth: window.innerWidth,
-      windowHeight: window.innerHeight,
-      targetWidth: context.targetWidth,
-      targetHeight: context.targetHeight,
-      scrollerType: nestedExpansion ? "expanded-nested" : (isDocument ? "document" : "element"),
-      position: currentPosition(false)
-    };
+    const viewport = measureViewport(context);
+    context.prep = {protocolVersion:1,...identity,documentNonce,planId:context.planId,
+      windowWidth:window.innerWidth,windowHeight:window.innerHeight,
+      targetWidth:context.targetWidth,targetHeight:context.targetHeight,
+      direction:getComputedStyle(scroller).direction || "ltr",
+      scrollerType:nestedExpansion ? "expanded-nested" : (isDocument ? "document" : "element"),
+      position:{logicalX:0,logicalY:0,...viewport,stickyCrop:0}};
+    context.signature = liveMetrics(context);
+    context.prep.signature = {...context.signature};
+    context.plan = P.makeTraversal(context.prep);
+    if(context.plan.estimatedFrames>P.MAX_CAPTURE_FRAMES) throw P.fault("FRAME_LIMIT","Capture exceeds frame limit.");
+    installGeometryObservers(context);
+    return context.prep;
     } catch (error) {
       await restore(context);
       throw error;
     }
   }
 
-  async function advance() {
-    const context = state;
+  function measureDocument(doc) {
+    const win=doc.defaultView || window;
+    const root=doc.compatMode === "BackCompat" ? doc.body : doc.documentElement;
+    const scroller=doc.scrollingElement || root;
+    return {scroller,viewportWidth:root?.clientWidth || win.innerWidth,viewportHeight:root?.clientHeight || win.innerHeight,
+      scrollWidth:Math.max(scroller?.scrollWidth || 0,root?.scrollWidth || 0,win.innerWidth),
+      scrollHeight:Math.max(scroller?.scrollHeight || 0,root?.scrollHeight || 0,win.innerHeight),direction:getComputedStyle(scroller).direction || "ltr"};
+  }
+  function measureViewport(context) {
+    if(context.isDocument) {const m=measureDocument(document);return {sourceLeft:0,sourceTop:0,clientWidth:m.viewportWidth,clientHeight:m.viewportHeight};}
+    const s=context.scroller,r=s.getBoundingClientRect();
+    return {sourceLeft:r.left+s.clientLeft,sourceTop:r.top+s.clientTop,clientWidth:s.clientWidth,clientHeight:s.clientHeight};
+  }
+  function readLogicalScroll(context) {
+    const s=context.scroller,windowRoute=context.isDocument && !document.scrollingElement;
+    const nativeX=windowRoute ? window.scrollX : s.scrollLeft,nativeY=windowRoute ? window.scrollY : s.scrollTop;
+    const rtl=getComputedStyle(s).direction === "rtl";
+    return {nativeX,nativeY,logicalX:rtl ? nativeX+s.scrollWidth-measureViewport(context).clientWidth : nativeX,logicalY:nativeY};
+  }
+  function writeLogicalScroll(context,x,y) {
+    const s=context.scroller,nativeX=getComputedStyle(s).direction === "rtl" ? x-(s.scrollWidth-measureViewport(context).clientWidth) : x;
+    if(context.isDocument && !document.scrollingElement) window.scrollTo(nativeX,y);
+    else {s.scrollLeft=nativeX;s.scrollTop=y;}
+  }
+  function assertSupportedMapping(context) {
+    for(let el=context.scroller;el;el=el.parentElement) {
+      const css=getComputedStyle(el);
+      if((css.writingMode && css.writingMode!=="horizontal-tb") || (css.transform && css.transform!=="none")) throw P.fault("UNSUPPORTED_MAPPING","Unsupported capture target mapping.");
+    }
+    const v=window.visualViewport;
+    if(v && (v.scale!==1 || v.offsetLeft!==0 || v.offsetTop!==0)) throw P.fault("UNSUPPORTED_MAPPING","Pinch zoom mapping is unsupported.");
+  }
+  function liveMetrics(context) {
+    const v=window.visualViewport,m=measureDocument(document),p=measureViewport(context),s=context.scroller;
+    return {...p,innerWidth:window.innerWidth,innerHeight:window.innerHeight,layoutWidth:m.viewportWidth,layoutHeight:m.viewportHeight,
+      scrollWidth:s.scrollWidth,scrollHeight:s.scrollHeight,devicePixelRatio:window.devicePixelRatio || 1,
+      visualScale:v?.scale ?? 1,visualOffsetLeft:v?.offsetLeft ?? 0,visualOffsetTop:v?.offsetTop ?? 0,
+      geometryGeneration:context.geometryGeneration,geometryEpoch:context.geometryEpoch};
+  }
+  function installGeometryObservers(context) {
+    const listen=(target,type,fn)=>{if(!target?.addEventListener)return;target.addEventListener(type,fn,{passive:true});context.listeners.push(()=>target.removeEventListener(type,fn));};
+    listen(context.isDocument ? window : context.scroller,"scroll",()=>context.scrollEpoch++);
+    const geometry=()=>{context.geometryEpoch++;context.geometryGeneration++;};
+    listen(window,"resize",geometry);listen(window.visualViewport,"resize",geometry);listen(window.visualViewport,"scroll",geometry);
+    if(typeof ResizeObserver!=="undefined") {
+      let previous=null;
+      const observer=new ResizeObserver(()=>{const m=liveMetrics(context),key=[m.clientWidth,m.clientHeight,m.layoutWidth,m.layoutHeight].join(":");if(previous!==null && key!==previous)geometry();previous=key;});
+      observer.observe(context.scroller);if(context.scroller!==document.documentElement)observer.observe(document.documentElement);context.observers.push(observer);
+    }
+  }
+  function snapshot(context,spec) {
     checkOwner(context);
-    if (!state) throw new Error("Capture has not been initialized.");
-
-    const { scroller } = context;
-    const viewport = getViewportMetrics();
-    const maxX = Math.max(0, context.targetWidth - viewport.clientWidth);
-    const maxY = Math.max(0, context.targetHeight - viewport.clientHeight);
-    const logicalXBefore = context.currentX + context.logicalOffsetX;
-
-    if (logicalXBefore < maxX - SCROLL_EPSILON) {
-      const stepX = Math.max(1, viewport.clientWidth - HORIZONTAL_OVERLAP);
-      const desiredLogicalX = Math.min(maxX, logicalXBefore + stepX);
-      const desiredX = Math.max(0, desiredLogicalX - context.logicalOffsetX);
-      const beforeWidth = scroller.scrollWidth;
-
-      scroller.scrollLeft = desiredX;
-      await settle();
-      checkOwner(context);
-
-      const actualX = scroller.scrollLeft;
-      const afterWidth = scroller.scrollWidth;
-      if (beforeWidth - afterWidth > 4) {
-        throw new Error(
-          "The page width changed during capture, so the frozen capture boundary is no longer reliable."
-        );
-      }
-
-      const logicalXAfter = actualX + context.logicalOffsetX;
-      if (logicalXAfter <= logicalXBefore + SCROLL_EPSILON) {
-        throw new Error(
-          `Horizontal scrolling stopped at ${Math.round(logicalXBefore)}px before the frozen capture boundary.`
-        );
-      }
-
-      context.currentX = actualX;
-      suppressViewportAnchoredElements(true);
-      context.frameIndex += 1;
-
-      return { done: false, position: currentPosition(false) };
-    }
-
-    const logicalYBefore = context.currentY + context.logicalOffsetY;
-    if (logicalYBefore >= maxY - SCROLL_EPSILON) {
-      return { done: true };
-    }
-
-    const first = context.firstVerticalMove;
-    const { stride: stepY } = verticalGeometry(viewport.clientHeight, first);
-
-    const desiredLogicalY = Math.min(maxY, logicalYBefore + stepY);
-    const desiredY = Math.max(0, desiredLogicalY - context.logicalOffsetY);
-    const beforeHeight = scroller.scrollHeight;
-
-    // A new row always starts at the physical/logical left edge.
-    context.logicalOffsetX = 0;
-    scroller.scrollLeft = 0;
-    scroller.scrollTop = desiredY;
-    await settle();
-      checkOwner(context);
-
-    const actualX = scroller.scrollLeft;
-    const actualY = scroller.scrollTop;
-    const afterHeight = scroller.scrollHeight;
-
-    if (beforeHeight - afterHeight > 4) {
-      throw new Error(
-        "The page height changed during capture, so the frozen capture boundary is no longer reliable."
-      );
-    }
-
-    const logicalYAfter = actualY + context.logicalOffsetY;
-    if (logicalYAfter <= logicalYBefore + SCROLL_EPSILON) {
-      throw new Error(
-        `Vertical scrolling stopped at ${Math.round(logicalYBefore)}px before the frozen capture boundary.`
-      );
-    }
-
-    context.currentX = actualX;
-    context.currentY = actualY;
-    context.firstVerticalMove = false;
-
-    suppressViewportAnchoredElements(false);
-    context.frameIndex += 1;
-
-    return { done: false, position: currentPosition(true) };
+    if(!P.sameSpec(spec,context.commandedSpec))throw P.fault("FRAME_ORDER","Snapshot does not match commanded frame.");
+    assertSupportedMapping(context);
+    const metrics=liveMetrics(context),original=context.signature;
+    const keys=["sourceLeft","sourceTop","clientWidth","clientHeight","innerWidth","innerHeight","layoutWidth","layoutHeight","devicePixelRatio","visualScale","visualOffsetLeft","visualOffsetTop"];
+    if(keys.some(k=>metrics[k]!==original[k])) {context.geometryGeneration++;metrics.geometryGeneration=context.geometryGeneration;}
+    const scroll=readLogicalScroll(context);
+    return {documentNonce,...context.identity,planId:context.planId,sequence:spec.sequence,...metrics,
+      nativeScrollLeft:scroll.nativeX,nativeScrollTop:scroll.nativeY,logicalX:scroll.logicalX,logicalY:scroll.logicalY,
+      scrollEpoch:context.scrollEpoch,warnings:[...context.warnings]};
   }
-
-  function verticalGeometry(height, first) {
-    const crop = Math.min(STICKY_CROP, Math.floor(height / 2));
-    const overlap = Math.min(first ? FIRST_VERTICAL_OVERLAP : VERTICAL_OVERLAP,
-      Math.max(crop + 1, Math.floor(height / 2) + 1));
-    return { crop, stride: Math.max(1, height - overlap) };
+  async function moveTo(context,spec) {
+    checkOwner(context);
+    const expected=P.nextFrameSpec(context.plan,context.commandedSpec || null);
+    if(!P.sameSpec(spec,expected) && !P.sameSpec(spec,context.commandedSpec))throw P.fault("FRAME_ORDER","Position does not match planned traversal.");
+    if(context.commandedSpec && !P.sameSpec(spec,context.commandedSpec))context.previousSpec=context.commandedSpec;
+    context.commandedSpec=spec;
+    discoverCaptureRoots(context,{remaining:12000});
+    writeLogicalScroll(context,spec.logicalX,spec.logicalY);
+    await settle();checkOwner(context);
+    context.currentX=context.scroller.scrollLeft;context.currentY=context.scroller.scrollTop;
+    suppressViewportAnchoredElements(spec);
+    return snapshot(context,spec);
   }
-
-  function currentPosition(afterVerticalMove) {
-    const viewport = getViewportMetrics();
-    return {
-      scrollX: state.currentX,
-      scrollY: state.currentY,
-      logicalX: state.currentX + state.logicalOffsetX,
-      logicalY: state.currentY + state.logicalOffsetY,
-      sourceLeft: viewport.sourceLeft,
-      sourceTop: viewport.sourceTop,
-      clientWidth: viewport.clientWidth,
-      clientHeight: viewport.clientHeight,
-      stickyCrop:
-        state.currentY + state.logicalOffsetY > 0 || afterVerticalMove ? verticalGeometry(viewport.clientHeight, false).crop : 0
-    };
-  }
-
-  function getViewportMetrics() {
-    const { scroller, isDocument } = state;
-    if (isDocument) {
-      const root = document.documentElement;
-      return {
-        sourceLeft: 0,
-        sourceTop: 0,
-        clientWidth: root.clientWidth || window.innerWidth,
-        clientHeight: root.clientHeight || window.innerHeight
-      };
-    }
-
-    const rect = scroller.getBoundingClientRect();
-    return {
-      sourceLeft: rect.left + scroller.clientLeft,
-      sourceTop: rect.top + scroller.clientTop,
-      clientWidth: scroller.clientWidth,
-      clientHeight: scroller.clientHeight
-    };
-  }
+  function getViewportMetrics() {return measureViewport(state);}
 
   function detectPrimaryScroller() {
     const docScroller = document.scrollingElement || document.documentElement;
@@ -504,7 +435,7 @@
 
     function set(el, prop, value) {
       save(el);
-      el.style.setProperty(prop, value, "important");
+      writeOwnedProperty(el,prop,value);
     }
 
     let el = target;
@@ -570,54 +501,42 @@
       el = el.parentElement;
     }
 
-    return {
-      restore() {
-        const entries = [...saved.entries()].reverse();
-        for (const [node, props] of entries) {
-          if (!node?.style) continue;
-          for (const [prop, savedValue] of Object.entries(props)) {
-            if (savedValue.value) {
-              node.style.setProperty(prop, savedValue.value, savedValue.priority || "");
-            } else {
-              node.style.removeProperty(prop);
-            }
-          }
-        }
-        saved.clear();
-      }
-    };
+    return {restore};
   }
 
-  function installCaptureStyles(context) {
-    const css = `
-      *, *::before, *::after {
-        transition: none !important;
-        animation: none !important;
-        scroll-behavior: auto !important;
-        scroll-snap-type: none !important;
-      }
-    `;
-
-    const styles = [];
-    const install = root => {
-      try {
-        const style = document.createElement("style");
-        style.setAttribute("data-cfp-capture-style", "");
-        style.textContent = css;
-        context?.rollback.push(() => style.remove());
-        styles.push(style);
-        root.appendChild(style);
-      } catch {}
-    };
-
-    install(document.head || document.documentElement);
-
-    for (const el of allElements(document.documentElement)) {
-      if (el.shadowRoot) install(el.shadowRoot);
+  function installPauseStyle(root,context) {
+    if(context.roots.has(root))return;
+    context.roots.add(root);
+    const doc=root.nodeType===9 ? root : root.ownerDocument;
+    const style=doc.createElement("style");style.setAttribute("data-cfp-capture-style",context.planId);
+    style.textContent="*, *::before, *::after { animation-play-state:paused!important; scroll-behavior:auto!important; scroll-snap-type:none!important; }";
+    (root.nodeType===9 ? root.head || root.documentElement : root).appendChild(style);
+    context.ownedStyles.push(style);
+  }
+  function classifyLiveEffects(root,visibleRect,context) {
+    for(const effect of root.getAnimations?.({subtree:true}) || []) {
+      context.effects.add(effect);
+      if(effect.playState!=="running" && !effect.pending)continue;
+      const target=effect.effect?.target,rect=target?.getBoundingClientRect?.();
+      if(rect && rect.right>visibleRect.left && rect.bottom>visibleRect.top && rect.left<visibleRect.right && rect.top<visibleRect.bottom)context.warnings.add("LIVE_MOTION");
     }
-
-    return styles;
   }
+  function discoverCaptureRoots(context,budget) {
+    const visited=new WeakSet();
+    const visit=root=>{
+      if(!root || visited.has(root) || budget.remaining<=0)return;visited.add(root);installPauseStyle(root,context);
+      classifyLiveEffects(root,{left:0,top:0,right:window.innerWidth,bottom:window.innerHeight},context);
+      for(const el of root.querySelectorAll?.("*") || []) {
+        if(--budget.remaining<0)break;
+        if(el.shadowRoot)visit(el.shadowRoot);
+        if(el instanceof HTMLIFrameElement)try{const doc=el.contentDocument;if(doc){void doc.location.href;visit(doc);}}catch{}
+      }
+    };
+    visit(document);
+    if(budget.remaining<=0)context.warnings.add("DISCOVERY_LIMIT");
+  }
+  function restoreOwnedStyles(context) {for(const node of context.ownedStyles)node.remove();context.ownedStyles.length=0;}
+  function installCaptureStyles(context) {discoverCaptureRoots(context,{remaining:12000});return context.ownedStyles;}
 
   function snapshotIframeScroll(context) {
     for (const el of allElements(document.documentElement)) {
@@ -724,12 +643,12 @@
         ? decoration("borderTopWidth", "borderBottomWidth", "paddingTop", "paddingBottom") : 0;
 
       if (needsWidth) {
-        el.style.setProperty("width", `${Math.ceil(contentWidth + extraWidth)}px`, "important");
-        el.style.setProperty("max-width", "none", "important");
+        writeOwnedProperty(el,"width", `${Math.ceil(contentWidth + extraWidth)}px`);
+        writeOwnedProperty(el,"max-width", "none");
       }
       if (needsHeight) {
-        el.style.setProperty("height", `${Math.ceil(contentHeight + extraHeight)}px`, "important");
-        el.style.setProperty("max-height", "none", "important");
+        writeOwnedProperty(el,"height", `${Math.ceil(contentHeight + extraHeight)}px`);
+        writeOwnedProperty(el,"max-height", "none");
       }
 
       count += 1;
@@ -785,84 +704,51 @@
     }
   }
 
-  function suppressViewportAnchoredElements(horizontal) {
-    if (!state) return;
-    const { scroller, isDocument } = state;
-    const viewportArea = Math.max(1, window.innerWidth * window.innerHeight);
-    let visited = 0;
-
-    for (const el of allElements(document.documentElement)) {
-      if (++visited > 12000) break;
-      if (!(el instanceof HTMLElement) || el === scroller) continue;
-      if (state.hidden.has(el)) continue;
-
-      const style = getComputedStyle(el);
-      if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") continue;
-
-      const rect = el.getBoundingClientRect();
-      if (rect.width <= 0 || rect.height <= 0) continue;
-
-      if (style.position === "fixed" && rect.width * rect.height < viewportArea * 0.6) {
-        hideElement(el);
-        continue;
+  function suppressViewportAnchoredElements(spec) {
+    const context=state,scroller=context.scroller;
+    if(context.lastPosition && !P.sameSpec(context.lastPosition,spec)) (context.acceptedRects ||= []).push({x0:context.lastPosition.logicalX,y0:context.lastPosition.logicalY,x1:context.lastPosition.logicalX+context.lastPosition.clientWidth,y1:context.lastPosition.logicalY+context.lastPosition.clientHeight});
+    let visited=0;
+    for(const el of allElements(document.documentElement)) {
+      if(++visited>12000)break;
+      if(!(el instanceof HTMLElement) || el===scroller || el.contains(scroller))continue;
+      const style=getComputedStyle(el);
+      if(style.position!=="fixed" && style.position!=="sticky")continue;
+      const rect=el.getBoundingClientRect();
+      if(rect.width<=0 || rect.height<=0 || style.display==="none" || style.visibility==="hidden")continue;
+      const previous=context.tracked.get(el);
+      if(spec.sequence===0 || !previous) {context.tracked.set(el,{rect,logicalX:spec.logicalX,logicalY:spec.logicalY,represented:style.position==="fixed" || spec.logicalY===0 || (Math.abs(rect.top-(parseFloat(style.top)||0))>0.5)});continue;}
+      if(style.position==="sticky" && !previous.represented) {
+        if(Math.abs(rect.top-(parseFloat(style.top)||0))>0.5)previous.represented=true;
       }
-
-      const prev = state.tracked.get(el);
-      state.tracked.set(el, {
-        left: rect.left,
-        top: rect.top,
-        scrollLeft: scroller.scrollLeft,
-        scrollTop: scroller.scrollTop
-      });
-
-      if (!prev) continue;
-      if (rect.bottom < 0 || rect.top > window.innerHeight) continue;
-      if (rect.width * rect.height > viewportArea * 0.35) continue;
-
-      const scrollDx = scroller.scrollLeft - prev.scrollLeft;
-      const scrollDy = scroller.scrollTop - prev.scrollTop;
-      const movedX = rect.left - prev.left;
-      const movedY = rect.top - prev.top;
-
-      const anchored = horizontal
-        ? Math.abs(scrollDx) > 5 && Math.abs(movedX) < Math.abs(scrollDx) / 2
-        : Math.abs(scrollDy) > 5 && Math.abs(movedY) < Math.abs(scrollDy) / 2;
-
-      if (!anchored) continue;
-
-      if (!isDocument) {
-        if (el.contains(scroller)) continue;
-        if (scroller.contains(el) && rect.width * rect.height > viewportArea * 0.25) continue;
+      if(previous.represented && !context.hidden.has(el))hideElement(el);
+      if(Number(getComputedStyle(el).opacity)!==0) {
+        const output={x0:spec.logicalX+rect.left-spec.sourceLeft,y0:spec.logicalY+rect.top-spec.sourceTop,x1:spec.logicalX+rect.right-spec.sourceLeft,y1:spec.logicalY+rect.bottom-spec.sourceTop};
+        const required={x0:spec.logicalX,y0:spec.logicalY,x1:spec.logicalX+spec.clientWidth,y1:spec.logicalY+spec.clientHeight};
+        if(uncoveredIntersection(output,required,context.acceptedRects || []))throw P.fault("UNSUPPORTED_OCCLUSION","Repeated occlusion blocks required capture pixels.");
       }
-
-      if (hasHiddenAncestor(el)) continue;
-      hideElement(el);
     }
-  }
+    // Reaching the next position means the preceding position was accepted by the worker.
 
-  function hasHiddenAncestor(el) {
-    let p = el.parentElement;
-    while (p && p !== document.documentElement) {
-      const s = getComputedStyle(p);
-      if (s.display === "none" || s.visibility === "hidden" || s.opacity === "0") return true;
-      p = p.parentElement;
-    }
-    return false;
+    context.lastPosition=spec;
   }
-
-  function hideElement(el) {
-    if (state.hidden.has(el)) return;
-    state.hidden.set(el, {
-      opacity: el.style.getPropertyValue("opacity"),
-      opacityPriority: el.style.getPropertyPriority("opacity"),
-      animation: el.style.getPropertyValue("animation"),
-      animationPriority: el.style.getPropertyPriority("animation"),
-      transitionDuration: el.style.getPropertyValue("transition-duration"),
-      transitionPriority: el.style.getPropertyPriority("transition-duration")
+  function uncoveredIntersection(a,b,covered) {
+    let pieces=[{x0:Math.max(a.x0,b.x0),y0:Math.max(a.y0,b.y0),x1:Math.min(a.x1,b.x1),y1:Math.min(a.y1,b.y1)}].filter(r=>r.x1>r.x0 && r.y1>r.y0);
+    for(const c of covered)pieces=pieces.flatMap(r=>{
+      const x0=Math.max(r.x0,c.x0),y0=Math.max(r.y0,c.y0),x1=Math.min(r.x1,c.x1),y1=Math.min(r.y1,c.y1);
+      if(x1<=x0 || y1<=y0)return [r];
+      return [{...r,y1:y0},{...r,y0:y1},{x0:r.x0,x1:x0,y0,y1},{x0:x1,x1:r.x1,y0,y1}].filter(p=>p.x1>p.x0 && p.y1>p.y0);
     });
-    el.style.setProperty("opacity", "0", "important");
-    el.style.setProperty("animation", "none", "important");
-    el.style.setProperty("transition-duration", "0s", "important");
+    return pieces.length>0;
+  }
+  function hideElement(el) {
+    if(state.hidden.has(el))return;
+    // A removable rule preserves page inline values and active CSS transitions.
+    const root=el.getRootNode(),doc=el.ownerDocument,style=doc.createElement("style");
+    const token=`cfp-${crypto.randomUUID()}`,previous=el.getAttribute("data-cfp-occluder");
+    el.setAttribute("data-cfp-occluder",token);style.setAttribute("data-cfp-capture-style",state.planId);
+    style.textContent=`[data-cfp-occluder="${token}"] { opacity:0!important; }`;
+    (root.nodeType===9 ? root.head || root.documentElement : root).appendChild(style);
+    state.ownedStyles.push(style);state.hidden.set(el,{doc,token,previous});
   }
 
   function neutralizeFixedBackgrounds() {
@@ -879,34 +765,41 @@
         value: el.style.getPropertyValue("background-attachment"),
         priority: el.style.getPropertyPriority("background-attachment")
       });
-      el.style.setProperty("background-attachment", "scroll", "important");
+      writeOwnedProperty(el,"background-attachment", "scroll");
     }
   }
 
   async function restore(old = state) {
-    if (!old || old.cancelled) return true;
+    if (!old || old.cancelled) return {acknowledged:true,partial:false,failed:[]};
     old.cancelled = true;
     if (state === old) state = null;
-    for (const [el, saved] of old.hidden) {
-      restoreProperty(el, "opacity", saved.opacity, saved.opacityPriority);
-      restoreProperty(el, "animation", saved.animation, saved.animationPriority);
-      restoreProperty(el, "transition-duration", saved.transitionDuration, saved.transitionPriority);
-    }
-    for (const item of old.changedStyles) restoreProperty(item.el, item.property, item.value, item.priority);
-    for (const undo of old.rollback.reverse()) {
-      try { undo(); } catch {}
-    }
+    const summary={acknowledged:true,partial:false,failed:[]};
+    const attempt=fn=>{try{fn();}catch{summary.partial=true;summary.failed.push("RESTORE_FAILED");}};
+    for(const remove of old.listeners)attempt(remove);
+    for(const observer of old.observers)attempt(()=>observer.disconnect());
+    attempt(()=>restoreOwnedStyles(old));
+    for(const [el,saved] of old.hidden)attempt(()=>{if(el.ownerDocument===saved.doc && el.getAttribute("data-cfp-occluder")===saved.token){if(saved.previous===null)el.removeAttribute("data-cfp-occluder");else el.setAttribute("data-cfp-occluder",saved.previous);}});
+    for(const item of old.changedStyles)attempt(()=>restoreProperty(item.el,item.property,item.value,item.priority));
+    for(const undo of old.rollback.reverse())attempt(undo);
     old.rollback.length = 0;
     // Restore offsets only after every expanded dimension has been collapsed.
     // Setting scroll offsets forces layout using the restored dimensions.
     for (const undo of old.scrollRollback.reverse()) {
-      try { undo(); } catch {}
+      attempt(undo);
     }
     old.scrollRollback.length = 0;
-    return true;
+    return summary;
   }
 
+  const ownedWrites = new WeakMap();
+  function writeOwnedProperty(el,property,value,priority="important") {
+    let records=ownedWrites.get(el);if(!records){records=new Map();ownedWrites.set(el,records);}
+    if(!records.has(property))records.set(property,{document:el.ownerDocument,previousValue:el.style.getPropertyValue(property),previousPriority:el.style.getPropertyPriority(property)});
+    el.style.setProperty(property,value,priority);const record=records.get(property);record.writtenValue=el.style.getPropertyValue(property);record.writtenPriority=el.style.getPropertyPriority(property);
+  }
   function restoreProperty(el, property, value, priority) {
+    const records=ownedWrites.get(el),record=records?.get(property);
+    if(record) {records.delete(property);if(el.ownerDocument!==record.document || el.style.getPropertyValue(property)!==record.writtenValue || el.style.getPropertyPriority(property)!==record.writtenPriority)return;value=record.previousValue;priority=record.previousPriority;}
     if (!el?.style) return;
     if (value) el.style.setProperty(property, value, priority || "");
     else el.style.removeProperty(property);

@@ -6,55 +6,70 @@ const sessions = new Map();
 const blobUrls = new Set();
 const sessionUrls = new Map();
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.target !== "cfp-offscreen") return;
-
-  handle(message)
-    .then(sendResponse)
-    .catch(error => {
-      console.error("Capture Full Page compositor failed:", error);
-      sendResponse({ error: String(error?.message || error) });
-    });
-
-  return true;
+const P = globalThis.__cfpProtocol;
+if (!P || P.protocolVersion!==1) throw new Error("Capture protocol unavailable.");
+const contextId=crypto.randomUUID(),lifecycleGeneration=1;
+let requesterOwner=null;
+const outputRecords=new Map();
+const operationTypes=new Set(["start","frame","finish","abort","revoke"]);
+function envelope(message) {
+  const valid=message?.target==="cfp-offscreen" && message.protocolVersion===1 && P.uuid(message.requestId);
+  const context=message?.type==="status";
+  if(!valid || (context ? !P.uuid(message.requesterOwner) : !operationTypes.has(message.type) || ["operationId","sessionId","owner"].some(k=>!P.uuid(message[k]))) || (message.type==="finish" && !P.uuid(message.intentId)))throw P.fault("INVALID_ENVELOPE","Invalid compositor envelope.");
+  const keys=context ? ["target","type","protocolVersion","requestId","requesterOwner"] : ["target","type","protocolVersion","requestId","operationId","sessionId","owner"];
+  if(message.intentId!==undefined){if(!P.uuid(message.intentId))throw P.fault("INVALID_ENVELOPE","Invalid intent identity.");keys.push("intentId");}
+  return Object.fromEntries(keys.map(k=>[k,message[k]]));
+}
+function authenticatedWorker(sender) {
+  return sender?.id===chrome.runtime.id && !sender.tab && (!sender.url || sender.url===chrome.runtime.getURL("service-worker.js"));
+}
+chrome.runtime.onMessage.addListener((message,sender,sendResponse)=>{
+  if(message?.target!=="cfp-offscreen")return;
+  if(!authenticatedWorker(sender)){sendResponse(P.errorResult("INVALID_SENDER","Untrusted compositor sender."));return;}
+  trustedBackgroundEntry(message).then(sendResponse);return true;
 });
-
+async function trustedBackgroundEntry(message) {
+  let echo;
+  try {echo=envelope(message);} catch {return {target:"cfp-offscreen",type:"protocol-error",protocolVersion:1,requestId:P.uuid(message?.requestId)?message.requestId:null,...P.errorResult("INVALID_ENVELOPE","Invalid compositor envelope.")};}
+  try {return {...echo,...await handle(message)};} catch(error){return {...echo,...P.errorResult(error.code || "CAPTURE_FAILED",String(error?.message || error))};}
+}
+function assertSessionIdentity(s,message) {
+  if(!s || ["operationId","sessionId","owner"].some(k=>s[k]!==message[k]))throw P.fault("INVALID_IDENTITY","Capture session identity mismatch.");
+}
 async function handle(message) {
-  switch (message.type) {
-    case "start":
-      // A replacement worker owns no unfinished work from the previous worker.
-      // Completed URLs have a separate download lifetime and are left alone.
-      if (message.owner) {
-        for (const [id, session] of sessions) {
-          if (session.owner !== message.owner) cleanupSession(id);
-        }
-      }
-      cleanupSession(message.sessionId);
-      sessions.set(message.sessionId, createSession(message.prep, message.owner));
-      renewSession(message.sessionId);
-      return { ok: true };
-    case "frame":
-      return addFrame(message);
-    case "finish":
-      return finish(message.sessionId);
-    case "abort":
-      cleanupSession(message.sessionId);
-      revokeSessionUrl(message.sessionId);
-      return { ok: true, idle: isIdle() };
-    case "revoke":
-      revoke(message.url);
-      return { ok: true, idle: isIdle() };
-    case "status":
-      return { ok: true, idle: isIdle() };
-    default:
-      throw new Error("Unknown compositor command.");
+  if(message.type==="status") {requesterOwner=message.requesterOwner;return {ok:true,idle:isIdle(),contextId,lifecycleGeneration,retainedUrlCount:blobUrls.size};}
+  if(message.type==="start") {
+    if(sessions.has(message.sessionId))throw P.fault("SESSION_EXISTS","Capture session already exists.");
+    if(["owner","operationId","sessionId"].some(k=>message.prep?.[k]!==message[k]))throw P.fault("INVALID_IDENTITY","Preparation identity mismatch.");
+    const session=createSession(message.prep,message.owner);Object.assign(session,{operationId:message.operationId,sessionId:message.sessionId});
+    // Fully validate a new preparation before replacing abandoned active work.
+    for(const [id,old] of sessions)if(old.owner!==message.owner)cleanupSession(id);
+    sessions.set(message.sessionId,session);requesterOwner=message.owner;renewSession(message.sessionId);return {ok:true};
   }
+  if(message.type==="revoke") {
+    const output=outputRecords.get(message.url);
+    if(!output || ["operationId","sessionId","owner","intentId"].some(k=>output[k]!==message[k]))throw P.fault("INVALID_IDENTITY","Output identity mismatch.");
+    revoke(message.url);return {ok:true,idle:isIdle()};
+  }
+  const s=sessions.get(message.sessionId);
+  assertSessionIdentity(s,message);
+  if(message.type==="abort") {cleanupSession(message.sessionId);return {ok:true,idle:isIdle()};}
+  if(s.busy)throw P.fault("SESSION_BUSY","Capture session is busy.");
+  const token={};s.busy=token;
+  try {return message.type==="frame" ? await addFrame(message) : await finish(message.sessionId,message.intentId);}
+  catch(error){if(error.code!=="FRAME_ORDER" && error.code!=="SCROLL_CHANGED" && error.code!=="STALE_DOCUMENT" && error.code!=="GEOMETRY_CHANGED")cleanupSession(message.sessionId);throw error;}
+  finally {if(s.busy===token)s.busy=null;}
 }
 
 function createSession(prep, owner) {
   return {
     prep,
+    plan:P.makeTraversal(prep),
     owner,
+    lastAcceptedSpec:null,
+    finalizedThroughIndex:-1,
+    firstBitmapWidth:null,
+    firstBitmapHeight:null,
     cancelled: false,
     controller: new AbortController(),
     ratioX: null,
@@ -76,9 +91,7 @@ function renewSession(id, encoding = false) {
   s.deadline = setTimeout(() => {
     if (sessions.get(id) !== s) return;
     cleanupSession(id);
-    if (isIdle()) chrome.runtime.sendMessage({
-      target: "cfp-worker", type: "offscreen-idle"
-    }).catch(() => {});
+    if(isIdle())notifyIdle();
   }, encoding ? 10 * 60 * 1000 : 5 * 60 * 1000);
 }
 
@@ -91,59 +104,38 @@ async function addFrame(message) {
   if (!s) throw new Error("Unknown capture session.");
   renewSession(message.sessionId);
 
-  const response = await fetch(message.dataUrl, { signal: s.controller.signal });
-  if (!response.ok) throw new Error("Could not read captured frame.");
-  checkSession(s);
-  const blob = await response.blob();
-  checkSession(s);
-  const bitmap = await createImageBitmap(blob);
-
+  const expected=P.nextFrameSpec(s.plan,s.lastAcceptedSpec);
+  if(!P.sameSpec(message.spec,expected))throw P.fault("FRAME_ORDER","Unexpected frame sequence or coordinates.");
+  const validation=P.snapshotPair(s.plan,message.spec,message.preSnapshot,message.postSnapshot);
+  if(!validation.ok)throw P.fault(validation.code,"Frame snapshot rejected.");
+  if(typeof message.dataUrl!=="string" || !/^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(message.dataUrl))throw P.fault("INVALID_FRAME","Expected a PNG data URL.");
+  const response = await fetch(message.dataUrl, {signal:s.controller.signal});
+  checkSession(s);if(!response.ok)throw new Error("Could not read captured frame.");
+  const blob=await response.blob();checkSession(s);
+  const bitmap=await createImageBitmap(blob);
   try {
     checkSession(s);
-    if (s.ratioX == null) initializeGeometry(s, bitmap);
-
-    const p = message.position;
-    const stickyPx = p.stickyCrop > 0 ? Math.max(0, Math.floor(p.stickyCrop * s.ratioY)) : 0;
-
-    const sourceLeft = Math.max(0, Math.round(p.sourceLeft * s.ratioX));
-    const sourceTopBase = Math.max(0, Math.round(p.sourceTop * s.ratioY));
-    const sourceWidth = Math.max(1, Math.round(p.clientWidth * s.ratioX));
-    const sourceHeight = Math.max(1, Math.round(p.clientHeight * s.ratioY));
-
-    const destX = Math.max(0, Math.round(p.logicalX * s.ratioX));
-    const destY = Math.max(0, Math.round(p.logicalY * s.ratioY) + stickyPx);
-
-    // Later vertical rows discard the sticky region at the top and place the
-    // remainder at y + stickyPx. The configured overlap leaves previous pixels
-    // underneath that discarded region.
-    const sx = sourceLeft;
-    const sy = sourceTopBase + stickyPx;
-    const sw = Math.min(sourceWidth, bitmap.width - sx, s.widthPx - destX);
-    const sh = Math.min(
-      sourceHeight - stickyPx,
-      bitmap.height - sy,
-      s.heightPx - destY
-    );
-
-    if (sw <= 0 || sh <= 0) {
-      throw new Error(
-        `Captured frame does not intersect the expected output at ${destX},${destY}.`
-      );
+    if(s.ratioX==null)initializeGeometry(s,bitmap);
+    else if(bitmap.width!==s.firstBitmapWidth || bitmap.height!==s.firstBitmapHeight)throw P.fault("BITMAP_SCALE_CHANGED","Screenshot dimensions changed.");
+    for(const snap of [message.preSnapshot,message.postSnapshot]) {
+      if(Math.round(snap.logicalX*s.ratioX)!==Math.round(message.spec.logicalX*s.ratioX) || Math.round(snap.logicalY*s.ratioY)!==Math.round(message.spec.logicalY*s.ratioY))throw P.fault("SCROLL_CHANGED","Scroll offset changes device pixel placement.");
     }
-
-    await finalizeTilesBefore(s, destY);
+    const {sx,sy,sw,sh,dx:destX,dy:destY}=P.frameRect(s.prep,message.spec,bitmap.width,bitmap.height);
+    if(s.lastAcceptedSpec && message.spec.row>s.lastAcceptedSpec.row)await finalizeTilesBefore(s,destY);
     checkSession(s);
-    drawAcrossTiles(s, bitmap, sx, sy, sw, sh, destX, destY);
-
+    drawAcrossTiles(s,bitmap,sx,sy,sw,sh,destX,destY);
+    checkSession(s);
+    s.lastAcceptedSpec=message.spec;
     s.lastDestY = Math.max(s.lastDestY, destY);
     s.frames += 1;
-    return { ok: true, ratioX: s.ratioX, ratioY: s.ratioY };
+    return { ok: true, acceptedSequence:message.spec.sequence, ratioX: s.ratioX, ratioY: s.ratioY };
   } finally {
     bitmap.close();
   }
 }
 
 function initializeGeometry(s, bitmap) {
+  s.firstBitmapWidth=bitmap.width;s.firstBitmapHeight=bitmap.height;
   s.ratioX = bitmap.width / s.prep.windowWidth;
   s.ratioY = bitmap.height / s.prep.windowHeight;
 
@@ -202,6 +194,7 @@ function drawAcrossTiles(s, bitmap, sx, sy, sw, sh, dx, dy) {
 }
 
 function getTile(s, index) {
+  if(index<=s.finalizedThroughIndex || s.savedTiles.has(index))throw P.fault("FINALIZED_REGION_REVISIT","Finalized output region cannot be revisited.");
   let tile = s.activeTiles.get(index);
   if (tile) return tile;
 
@@ -228,8 +221,9 @@ async function finalizeTilesBefore(s, globalY) {
     .filter(index => index < safeBeforeIndex)
     .sort((a, b) => a - b);
 
-  for (const index of indexes) {
-    await finalizeTile(s, index);
+  for(let index=s.finalizedThroughIndex+1;index<safeBeforeIndex;index++){
+    if(!s.activeTiles.has(index))throw P.fault("MISSING_COVERAGE","Cannot finalize a missing tile.");
+    await finalizeTile(s,index);checkSession(s);s.finalizedThroughIndex=index;
   }
 }
 
@@ -237,6 +231,8 @@ async function finalizeTile(s, index) {
   const tile = s.activeTiles.get(index);
   if (!tile) return;
 
+  if(s.savedTiles.has(index))throw P.fault("FINALIZED_REGION_REVISIT","Tile already saved.");
+  validateTileCoverage(s.widthPx,tile.height,tile.coverage,index,s.tileHeight);
   const blob = await tile.canvas.convertToBlob({ type: "image/png" });
   checkSession(s);
   s.savedTiles.set(index, {
@@ -251,10 +247,11 @@ async function finalizeTile(s, index) {
   s.activeTiles.delete(index);
 }
 
-async function finish(sessionId) {
+async function finish(sessionId,intentId) {
   const s = sessions.get(sessionId);
   if (!s) throw new Error("Unknown capture session.");
   renewSession(sessionId, true);
+  if(P.nextFrameSpec(s.plan,s.lastAcceptedSpec)!==null)throw P.fault("MISSING_FRAMES","Not all planned frames were accepted.");
   if (!s.frames || s.ratioX == null) throw new Error("No screenshot frames were captured.");
 
   const activeIndexes = [...s.activeTiles.keys()].sort((a, b) => a - b);
@@ -274,6 +271,7 @@ async function finish(sessionId) {
   const url = URL.createObjectURL(pngBlob);
   blobUrls.add(url);
   sessionUrls.set(sessionId, url);
+  outputRecords.set(url,{operationId:s.operationId,sessionId,owner:s.owner,intentId});
 
   const width = s.widthPx;
   const height = s.heightPx;
@@ -283,13 +281,10 @@ async function finish(sessionId) {
     const removed = revoke(url);
     if (!removed || !isIdle()) return;
 
-    chrome.runtime.sendMessage({
-      target: "cfp-worker",
-      type: "offscreen-idle"
-    }).catch(() => {});
+    notifyIdle();
   }, 10 * 60 * 1000);
 
-  return { url, width, height };
+  return {ok:true,intentId,url,width,height,byteLength:pngBlob.size};
 }
 
 function validateTileCoverage(width, height, rects, tileIndex, tileHeight) {
@@ -400,9 +395,11 @@ function makeScanlineStream(width, tileEntries, s) {
   let ctx = null;
   let row = 0;
   let tileHeight = 0;
+  let disposed=false;
 
   return new ReadableStream({
     async pull(controller) {
+      if(disposed)throw P.fault("CANCELLED","Scanline source disposed.");
       checkSession(s);
       if (!bitmap) {
         if (tileCursor >= tileEntries.length) {
@@ -412,7 +409,8 @@ function makeScanlineStream(width, tileEntries, s) {
 
         const [, tile] = tileEntries[tileCursor];
         const decoded = await createImageBitmap(tile.blob);
-        if (s.cancelled) { decoded.close(); checkSession(s); }
+        if(s.cancelled || disposed){decoded.close();throw P.fault("CANCELLED","Scanline source disposed.");}
+        checkSession(s);
         bitmap = decoded;
         tileHeight = tile.height;
         canvas = new OffscreenCanvas(width, tileHeight);
@@ -433,6 +431,7 @@ function makeScanlineStream(width, tileEntries, s) {
         out.set(image.subarray(r * stride, (r + 1) * stride), dst + 1);
       }
 
+      checkSession(s);if(disposed)throw P.fault("CANCELLED","Scanline source disposed.");
       controller.enqueue(out);
       row += rowsThisChunk;
 
@@ -447,6 +446,7 @@ function makeScanlineStream(width, tileEntries, s) {
       }
     },
     cancel() {
+      disposed=true;
       bitmap?.close();
       bitmap = null;
       if (canvas) { canvas.width = 1; canvas.height = 1; }
@@ -498,6 +498,7 @@ function revoke(url) {
   if (!url || !blobUrls.has(url)) return false;
   URL.revokeObjectURL(url);
   blobUrls.delete(url);
+  outputRecords.delete(url);
 
   for (const [sessionId, sessionUrl] of sessionUrls) {
     if (sessionUrl === url) sessionUrls.delete(sessionId);
@@ -514,4 +515,9 @@ function revoke(url) {
  * Chrome offscreen document. In Chrome this global exists only inside the
  * offscreen document, so the service worker still communicates by message.
  */
-globalThis.__cfpCompositorHandle = handle;
+function notifyIdle() {
+  if(!requesterOwner)return;
+  chrome.runtime.sendMessage({target:"cfp-worker",type:"offscreen-idle",protocolVersion:1,requestId:crypto.randomUUID(),requesterOwner,contextId,lifecycleGeneration,idle:true}).catch(()=>{});
+}
+// Background-document-only trusted entry; popup documents have no reference to it.
+globalThis.__cfpCompositorHandle = trustedBackgroundEntry;

@@ -1,9 +1,14 @@
+if (!globalThis.__cfpProtocol && typeof importScripts === "function") importScripts("capture-protocol.js");
+const WP = globalThis.__cfpProtocol;
+if (!WP || WP.protocolVersion!==1) throw new Error("Capture protocol unavailable.");
 const MENU_ID = "capture-full-page";
 const OFFSCREEN_URL = "offscreen.html";
 const CAPTURE_DELAY_MS = 560;
 const MAX_CAPTURE_FRAMES = 20000;
 const RPC_TIMEOUT_MS = 15000;
 const compositorOwner = crypto.randomUUID();
+let lastCaptureInvocationStart=-Infinity;
+let compositorContext=null;
 
 let activeCapture = null;
 let offscreenCreation = null;
@@ -38,15 +43,17 @@ chrome.tabs.onActivated.addListener(activeInfo => {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.target === "cfp-worker" && message?.type === "offscreen-idle") {
-    closeOffscreenIfIdle().catch(() => {});
-    return;
+    const trusted=sender?.id===chrome.runtime.id && !sender.tab && sender.url===chrome.runtime.getURL(OFFSCREEN_URL);
+    if(!trusted || message.protocolVersion!==1 || !WP.uuid(message.requestId) || !compositorContext || message.contextId!==compositorContext.contextId || message.lifecycleGeneration!==compositorContext.lifecycleGeneration)return;
+    closeOffscreenIfIdle().catch(()=>{});
+    sendResponse({...message,ok:true,queued:true});return;
   }
 
   if (message?.type !== "capture-active-tab") return;
 
   chrome.tabs.query({ active: true, currentWindow: true })
     .then(async ([tab]) => {
-      if (!tab?.id || tab.windowId == null) {
+      if (!Number.isSafeInteger(tab?.id) || tab.id<0 || tab.windowId == null) {
         sendResponse({ ok: false, error: "No active tab is available to capture." });
         return;
       }
@@ -78,7 +85,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 function startCapture(tab) {
-  if (!tab?.id || tab.windowId == null) return null;
+  if (!Number.isSafeInteger(tab?.id) || tab.id<0 || !Number.isSafeInteger(tab.windowId) || tab.windowId<0) return null;
   if (activeCapture) return null;
 
   let resolveInitialized;
@@ -124,6 +131,8 @@ function startCapture(tab) {
 
 async function captureFullPage(tab, markInitialized) {
   const sessionId = crypto.randomUUID();
+  const scope={operationId:crypto.randomUUID(),sessionId,owner:compositorOwner,expiresAt:Date.now()+5*60*1000};
+  let outputScope=null;
   const tabId = tab.id;
   const windowId = tab.windowId;
   let port = null;
@@ -138,11 +147,11 @@ async function captureFullPage(tab, markInitialized) {
 
     await chrome.scripting.executeScript({
       target: { tabId },
-      files: ["content.js"]
+      files: ["capture-protocol.js", "content.js"]
     });
 
     port = chrome.tabs.connect(tabId, { name: `cfp:${sessionId}` });
-    rpc = createPortRPC(port);
+    rpc = createPortRPC(port,scope);
 
     const prep = await rpc.call("prepare");
     prepared = true;
@@ -154,63 +163,35 @@ async function captureFullPage(tab, markInitialized) {
 
     await ensureOffscreen();
     offscreenStarted = true;
-    const start = await callCompositor({
-      target: "cfp-offscreen",
-      type: "start",
-      sessionId,
-      prep
-    });
+    const plan=WP.makeTraversal(prep);
+    if(plan.estimatedFrames>MAX_CAPTURE_FRAMES)throw WP.fault("FRAME_LIMIT","Capture exceeds frame limit.");
+    const start=await callCompositor(scope,"start",{prep});
     throwIfOffscreenError(start);
-
     markInitialized();
-
-    let frameCount = 0;
-    let position = prep.position;
-    let previousPositionKey = null;
-
-    while (position) {
-      if (frameCount >= MAX_CAPTURE_FRAMES) {
-        throw new Error(
-          `Capture exceeded the safety limit of ${MAX_CAPTURE_FRAMES} frames.`
-        );
+    let frameCount=0,previousAcceptedSpec=null,spec;
+    while((spec=WP.nextFrameSpec(plan,previousAcceptedSpec))) {
+      checkOperation(scope);
+      let acquired=null;
+      for(let acquisition=0;acquisition<3;acquisition++) {
+        await assertOriginalTabActive(tabId,windowId);
+        const positioned=await rpc.call("position",spec);
+        const positionCheck=WP.validateSnapshot(plan,spec,positioned);
+        if(!positionCheck.ok && !positionCheck.retryable)throw WP.fault(positionCheck.code,"Position snapshot rejected.");
+        const preSnapshot=await rpc.call("snapshot",spec);
+        const preCheck=WP.validateSnapshot(plan,spec,preSnapshot);
+        if(!preCheck.ok){if(preCheck.retryable && acquisition<2)continue;throw WP.fault(preCheck.code,"Pre-capture snapshot rejected.");}
+        const dataUrl=await captureVisible(tabId,windowId,scope);
+        await assertOriginalTabActive(tabId,windowId);checkOperation(scope);
+        const postSnapshot=await rpc.call("snapshot",spec);
+        const validation=WP.snapshotPair(plan,spec,preSnapshot,postSnapshot);
+        if(!validation.ok){if(validation.retryable && acquisition<2)continue;throw WP.fault(validation.code,"Capture geometry changed.");}
+        acquired={spec,preSnapshot,postSnapshot,dataUrl};break;
       }
-
-      const positionKey = [
-        position.logicalX,
-        position.logicalY,
-        position.sourceLeft,
-        position.sourceTop
-      ].join(":");
-
-      if (positionKey === previousPositionKey) {
-        throw new Error("Page scrolling stopped making progress during capture.");
-      }
-      previousPositionKey = positionKey;
-
-      const dataUrl = await captureVisible(tabId, windowId);
-
-      const result = await callCompositor({
-        target: "cfp-offscreen",
-        type: "frame",
-        sessionId,
-        dataUrl,
-        position,
-        firstFrame: frameCount === 0
-      });
+      if(!acquired)throw WP.fault("SCROLL_CHANGED","Capture scroll retries exhausted.");
+      const result=await callCompositor(scope,"frame",acquired); // timeout is ambiguous: never replay
       throwIfOffscreenError(result);
-
-      frameCount += 1;
-
-      const next = await rpc.call("advance");
-      if (next.done) break;
-      if (!next.position) {
-        throw new Error("The page did not provide the next capture position.");
-      }
-      position = next.position;
-
-      // captureVisibleTab is limited to two calls per second. Allow the page and
-      // compositor to settle between scrolls as well.
-      await sleep(CAPTURE_DELAY_MS);
+      if(result.acceptedSequence!==spec.sequence)throw WP.fault("FRAME_ORDER","Unexpected accepted frame sequence.");
+      frameCount++;previousAcceptedSpec=spec;
     }
 
     if (frameCount === 0) throw new Error("No screenshot frames were captured.");
@@ -224,13 +205,10 @@ async function captureFullPage(tab, markInitialized) {
       console.warn("Capture Full Page could not restore the page early:", error);
     }
 
-    const finished = await callCompositor({
-      target: "cfp-offscreen",
-      type: "finish",
-      sessionId
-    });
+    const intentId=crypto.randomUUID();
+    const finished=await callCompositor(scope,"finish",{intentId});
     throwIfOffscreenError(finished);
-
+    outputScope={...scope,intentId};
     if (!finished?.url) throw new Error("Could not encode the screenshot.");
     finishedUrl = finished.url;
 
@@ -248,7 +226,7 @@ async function captureFullPage(tab, markInitialized) {
       if (delta.id !== downloadId || !delta.state) return;
       if (delta.state.current === "complete" || delta.state.current === "interrupted") {
         chrome.downloads.onChanged.removeListener(listener);
-        revokeOffscreenUrl(finishedUrl).catch(() => {});
+        revokeOffscreenUrl(outputScope,finishedUrl).catch(() => {});
       }
     };
     chrome.downloads.onChanged.addListener(listener);
@@ -261,16 +239,16 @@ async function captureFullPage(tab, markInitialized) {
     rpc?.close();
 
     if (offscreenStarted && !finishedUrl) {
-      await abortOffscreenSession(sessionId).catch(() => {});
+      await abortOffscreenSession(scope).catch(() => {});
     }
 
     if (finishedUrl && !downloadOwnsUrl) {
-      await revokeOffscreenUrl(finishedUrl).catch(() => {});
+      await revokeOffscreenUrl(outputScope,finishedUrl).catch(() => {});
     }
   }
 }
 
-function createPortRPC(port) {
+function createPortRPC(port,scope) {
   let seq = 0;
   let disconnected = false;
   const pending = new Map();
@@ -285,9 +263,9 @@ function createPortRPC(port) {
   };
 
   const onMessage = message => {
-    if (!message || message.replyTo == null) return;
+    if (!message || message.protocolVersion!==1 || ["operationId","sessionId","owner"].some(k=>message[k]!==scope[k]) || !Number.isSafeInteger(message.replyTo)) return;
     settlePending(message.replyTo, item => {
-      if (message.error) item.reject(new Error(message.error));
+      if (message.error) item.reject(WP.fault(message.code || "CAPTURE_FAILED",message.error));
       else item.resolve(message.result);
     });
   };
@@ -319,10 +297,12 @@ function createPortRPC(port) {
         }, RPC_TIMEOUT_MS);
 
         pending.set(id, { resolve, reject, timer });
-        port.postMessage({ id, method, payload });
+        try{port.postMessage({id,method,payload,protocolVersion:1,operationId:scope.operationId,sessionId:scope.sessionId,owner:scope.owner});}
+        catch(error){settlePending(id,item=>item.reject(error));}
       });
     },
     close() {
+      disconnected=true;
       port.onMessage.removeListener(onMessage);
       port.onDisconnect.removeListener(onDisconnect);
       const err = new Error("Capture RPC closed.");
@@ -355,12 +335,20 @@ async function assertOriginalTabActive(tabId, windowId) {
   }
 }
 
-async function captureVisible(tabId, windowId) {
+function checkOperation(scope) {
+  if(activeCapture?.cancelReason)throw WP.fault("CANCELLED",activeCapture.cancelReason);
+  if(Date.now()>=scope.expiresAt)throw WP.fault("DEADLINE_EXCEEDED","Capture deadline exceeded.");
+}
+async function captureVisible(tabId, windowId,scope) {
   let lastError = null;
 
   for (let attempt = 0; attempt < 5; attempt += 1) {
+    checkOperation(scope);
     await assertOriginalTabActive(tabId, windowId);
-
+    const delay=Math.max(0,lastCaptureInvocationStart+CAPTURE_DELAY_MS-Date.now());
+    if(delay)await sleep(delay);
+    checkOperation(scope);await assertOriginalTabActive(tabId,windowId);
+    lastCaptureInvocationStart=Date.now();
     try {
       const dataUrl = await chrome.tabs.captureVisibleTab(windowId, { format: "png" });
       await assertOriginalTabActive(tabId, windowId);
@@ -372,7 +360,7 @@ async function captureVisible(tabId, windowId) {
       lastError = error;
     }
 
-    await sleep(520);
+    checkOperation(scope);
   }
 
   throw lastError || new Error("captureVisibleTab failed.");
@@ -382,20 +370,21 @@ function hasSharedCompositor() {
   return typeof globalThis.__cfpCompositorHandle === "function";
 }
 
-async function callCompositor(message) {
-  if (message.type === "start") message = { ...message, owner: compositorOwner };
+async function callCompositor(scope,type,payload={}) {
+  const context=type==="status";
+  const message={target:"cfp-offscreen",type,protocolVersion:1,requestId:crypto.randomUUID(),
+    ...(context ? {requesterOwner:compositorOwner} : {operationId:scope.operationId,sessionId:scope.sessionId,owner:scope.owner}),...payload};
   let timer;
   try {
-    const operation = hasSharedCompositor()
-      ? globalThis.__cfpCompositorHandle(message)
-      : chrome.runtime.sendMessage(message);
-    return await Promise.race([operation, new Promise((_, reject) => {
-      timer = setTimeout(() => reject(new Error("Compositor operation timed out.")),
-        message.type === "finish" ? 10 * 60 * 1000 : 60 * 1000);
-    })]);
-  } finally {
-    clearTimeout(timer);
-  }
+    const operation=hasSharedCompositor() ? globalThis.__cfpCompositorHandle(message) : chrome.runtime.sendMessage(message);
+    const result=await Promise.race([operation,new Promise((_,reject)=>{timer=setTimeout(()=>reject(WP.fault("COMPOSITOR_TIMEOUT","Compositor operation timed out.")),type==="finish"?10*60*1000:60*1000);})]);
+    const fields=context ? ["target","type","protocolVersion","requestId","requesterOwner"] : ["target","type","protocolVersion","requestId","operationId","sessionId","owner"];
+    if(message.intentId!==undefined)fields.push("intentId");
+    if(!result || fields.some(k=>message[k]!==result[k]))throw WP.fault("INVALID_RESPONSE","Compositor response identity mismatch.");
+    throwIfOffscreenError(result);
+    if(context){if(!WP.uuid(result.contextId) || !Number.isSafeInteger(result.lifecycleGeneration) || result.lifecycleGeneration<0)throw WP.fault("INVALID_RESPONSE","Invalid compositor context.");compositorContext={contextId:result.contextId,lifecycleGeneration:result.lifecycleGeneration};}
+    return result;
+  } finally {clearTimeout(timer);}
 }
 
 async function ensureOffscreen() {
@@ -426,27 +415,11 @@ async function ensureOffscreen() {
   await offscreenCreation;
 }
 
-async function abortOffscreenSession(sessionId) {
-  const result = await callCompositor({
-    target: "cfp-offscreen",
-    type: "abort",
-    sessionId
-  });
-  throwIfOffscreenError(result);
-}
-
-async function revokeOffscreenUrl(url) {
-  if (!url) return;
-  const result = await callCompositor({
-    target: "cfp-offscreen",
-    type: "revoke",
-    url
-  });
-  throwIfOffscreenError(result);
-
-  if (result?.idle && !activeCapture) {
-    await closeOffscreenIfIdle();
-  }
+async function abortOffscreenSession(scope) {return callCompositor(scope,"abort",{reason:"capture-failed"});}
+async function revokeOffscreenUrl(scope,url) {
+  if(!url)return;
+  const result=await callCompositor(scope,"revoke",{url,intentId:scope.intentId});
+  if(result.idle && !activeCapture)await closeOffscreenIfIdle();
 }
 
 async function closeOffscreenIfIdle() {
@@ -464,10 +437,7 @@ async function closeOffscreenIfIdle() {
 
   let status;
   try {
-    status = await callCompositor({
-      target: "cfp-offscreen",
-      type: "status"
-    });
+    status = await callCompositor(null,"status");
   } catch {
     return;
   }
@@ -477,7 +447,7 @@ async function closeOffscreenIfIdle() {
 }
 
 function throwIfOffscreenError(result) {
-  if (result?.error) throw new Error(result.error);
+  if(!result || result.ok!==true)throw WP.fault(result?.code || "CAPTURE_FAILED",result?.error || "Compositor request failed.");
 }
 
 function makeFilename(tab) {

@@ -26,6 +26,7 @@
   },
   "background": {
     "scripts": [
+      "capture-protocol.js",
       "offscreen.js",
       "service-worker.js"
     ]

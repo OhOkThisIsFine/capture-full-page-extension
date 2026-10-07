@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / "dist"
 
 COMMON_FILES = [
+    "capture-protocol.js",
     "content.js",
     "popup.css",
     "popup.html",
@@ -59,9 +60,9 @@ def validate_manifests() -> str:
         raise ValueError("Firefox manifest must not request the Chrome-only offscreen permission.")
 
     firefox_scripts = firefox.get("background", {}).get("scripts", [])
-    if firefox_scripts != ["offscreen.js", "service-worker.js"]:
+    if firefox_scripts != ["capture-protocol.js", "offscreen.js", "service-worker.js"]:
         raise ValueError(
-            "Firefox background scripts must load offscreen.js before service-worker.js."
+            "Firefox background scripts must load capture-protocol.js, offscreen.js, service-worker.js in order."
         )
 
     gecko = firefox.get("browser_specific_settings", {}).get("gecko", {})
