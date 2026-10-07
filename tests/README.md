@@ -99,3 +99,19 @@ download a PNG with fabricated white regions.
 4. Repeat a large capture several times and inspect the extension service worker
    and offscreen document. The offscreen document should disappear after the
    download blob is revoked and no capture remains.
+
+## Independent publisher test chain
+
+The publisher workflow runs the dependency-free regression suite and Bash syntax
+check before packaging. All three publisher jobs retain `needs: build` with
+normal success gating. `publisher-gate.test.cjs` reads those production commands
+and dependencies, then runs the commands in a disposable directory with a
+syntax-valid failing regression and credential-free packaging/publisher process
+fakes. A passing control proves the recording fakes are reachable. The negative
+fixtures require zero packaging and privileged calls.
+
+This source/command fixture does not execute GitHub Actions, contact stores,
+qualify the locked release toolchain, install an extension, or establish native
+browser capture behavior. It requires Bash (Git Bash on Windows, or set
+`CFP_BASH_EXECUTABLE`). The intentionally failing fixture ends in `.cjs` rather
+than `.test.cjs` so the ordinary test glob does not collect it directly.
