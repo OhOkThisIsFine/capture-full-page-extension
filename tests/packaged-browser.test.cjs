@@ -516,7 +516,7 @@ test("synthetic complete run binds exact report bytes and decoded PNGs after eve
             ? "context-menu-top"
             : "toolbar";
       const name = `2026-10-07_00-00-00_127.0.0.1_CFP QA ${f.id}.png`,
-        ratio = 0.125,
+        ratio = f.id.startsWith("tile-boundary-") ? 1 : 0.125,
         width = f.width * ratio,
         height = Math.floor(f.height * ratio);
       const image = png(width, height, {
@@ -623,6 +623,20 @@ test("synthetic complete run binds exact report bytes and decoded PNGs after eve
       limitations: [],
     };
     t.child.emit("exit", 0, null);
+    fs.writeFileSync(
+      path.join(
+        t.session.evidenceDir,
+        "evidence/nested-static-shell-geometry.json",
+      ),
+      JSON.stringify({
+        runId: t.session.runId,
+        sourceRoute: "native-page-geometry-observation",
+        before: { width: 2048, height: 320 },
+        expanded: { width: 2048, height: 1088 },
+        restored: { width: 2048, height: 320 },
+        evidence: [evidence],
+      }),
+    );
     const validated = R.completeRun(
       t.session,
       Buffer.from(JSON.stringify(reviewer)),
@@ -642,3 +656,105 @@ test("synthetic complete run binds exact report bytes and decoded PNGs after eve
     assert.ok(fs.existsSync(t.session.profile));
     assert.equal(t.killed, 0);
   }));
+test("named tile cases reject reduced scale and corrupt seam rows on both sides of each actual boundary", () => {
+  for (const id of ["tile-boundary-8192", "tile-boundary-adaptive"]) {
+    const f = F.fixtures().find((f) => f.id === id),
+      seam = id.endsWith("8192") ? 8192 : 2048,
+      good = {
+        width: f.width,
+        height: f.height,
+        pixel(x, y) {
+          return F.color(Math.floor(x / 128), Math.floor(y / 128));
+        },
+      };
+    assert.equal(F.verifyPixels(good, f).seamSamples, 3 * f.width);
+    assert.throws(
+      () =>
+        F.verifyPixels(
+          { ...good, width: f.width / 8, height: f.height / 8 },
+          f,
+        ),
+      /exact production boundary/,
+    );
+    for (const row of [seam - 1, seam, seam + 1])
+      for (const x of [0, 127, 128, f.width - 1])
+        assert.throws(
+          () =>
+            F.verifyPixels(
+              {
+                ...good,
+                pixel(px, py) {
+                  return px === x && py === row
+                    ? [0, 0, 0, 255]
+                    : good.pixel(px, py);
+                },
+              },
+              f,
+            ),
+          /seam/,
+        );
+  }
+});
+test("Linux GUI environment accepts verified local session bindings and rejects remote unsafe or foreign bindings", () => {
+  const uid = 1000,
+    make = (kind, owner = uid, mode = 0o700) => ({
+      uid: owner,
+      mode,
+      size: 100,
+      isSymbolicLink: () => false,
+      isDirectory: () => kind === "directory",
+      isSocket: () => kind === "socket",
+      isFile: () => kind === "file",
+    }),
+    files = {
+      "/run/user/1000": make("directory"),
+      "/run/user/1000/wayland-0": make("socket"),
+      "/tmp/.X11-unix/X0": make("socket", 0),
+      "/run/user/1000/Xauthority": make("file", uid, 0o600),
+    },
+    stat = (p) => {
+      assert.ok(files[p], p);
+      return files[p];
+    },
+    source = {
+      DISPLAY: ":0",
+      XAUTHORITY: "/run/user/1000/Xauthority",
+      XDG_RUNTIME_DIR: "/run/user/1000",
+      WAYLAND_DISPLAY: "wayland-0",
+      GITHUB_TOKEN: "synthetic-secret",
+      DBUS_SESSION_BUS_ADDRESS: "not inherited",
+    };
+  assert.deepEqual(R.verifiedDisplayEnvironment(source, { uid, stat }), {
+    DISPLAY: ":0",
+    XAUTHORITY: source.XAUTHORITY,
+    XDG_RUNTIME_DIR: source.XDG_RUNTIME_DIR,
+    WAYLAND_DISPLAY: "wayland-0",
+  });
+  for (const patch of [
+    { DISPLAY: "example.com:0" },
+    { WAYLAND_DISPLAY: "../socket" },
+    { DISPLAY: "", XAUTHORITY: source.XAUTHORITY },
+  ])
+    assert.throws(() =>
+      R.verifiedDisplayEnvironment({ ...source, ...patch }, { uid, stat }),
+    );
+  files["/run/user/1000"].mode = 0o777;
+  assert.throws(
+    () => R.verifiedDisplayEnvironment(source, { uid, stat }),
+    /runtime/,
+  );
+  files["/run/user/1000"].mode = 0o700;
+  files[source.XAUTHORITY].uid = 2000;
+  assert.throws(
+    () => R.verifiedDisplayEnvironment(source, { uid, stat }),
+    /authority/,
+  );
+});
+test("nested fixture begins at natural shell height and grows after static expansion without a preset final document height", () => {
+  const f = F.fixtures().find((f) => f.id === "nested-static-shell");
+  assert.deepEqual(f.initialGeometry, { width: 2048, height: 320 });
+  assert.deepEqual(f.expandedGeometry, { width: 2048, height: 1088 });
+  assert.ok(f.html.includes("html,body{width:2048px}"));
+  assert.ok(f.html.includes("height:256px;width:2048px;overflow:auto"));
+  assert.ok(!f.html.includes("html,body{width:2048px;height:1088px}"));
+});

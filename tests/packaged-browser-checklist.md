@@ -112,3 +112,26 @@ is part of this runner. Retain the full owned directory for independent review.
 | `tile-boundary-adaptive` | Always required: pass with native evidence |
 | `two-axis-coordinate-grid` | Always required: pass with native evidence |
 | `unrelated-window-tab-change` | Always required: pass with native evidence |
+
+## Independent review corrections
+
+Named tile cases now require exact scale1 PNG dimensions: 1024x8300 crosses8192;
+4096x2200 crosses the actual8Mi-pixel2048-row adaptive tile. The oracle checks every
+pixel across seam-1/seam/seam+1, including both horizontal edges. A reduced-scale
+fixture cannot qualify either named boundary. Synthetic complete-run tiles use scale1.
+
+The nested static fixture now starts at natural document320px height and expands to1088px;
+it no longer presets the final height before expansion. A native completion additionally
+requires `evidence/nested-static-shell-geometry.json` with exact `runId`,
+`sourceRoute:'native-page-geometry-observation'`, `before:{width:2048,height:320}`,
+`expanded:{width:2048,height:1088}`, `restored:{width:2048,height:320}`, and genuine evidence
+paths. Observe and record these through ordinary native page inspection during the run;
+expected fixture declarations and synthetic PNGs do not prove actual DOM growth/restoration.
+
+On Linux the GUI child preserves only verified local DISPLAY/XAUTHORITY and/or
+WAYLAND_DISPLAY/XDG_RUNTIME_DIR bindings. Local X socket must exist and belong to current
+user/root; authority must be a bounded regular current-user file without group/world write.
+Wayland requires current-user0700 runtime directory and current-user socket. Remote displays,
+foreign owners, unsafe modes and linked leaf bindings fail before browser launch. No general
+session bus, provider secret or broad environment is inherited. Native GUI connection remains
+unrun in this source-only follow-up.

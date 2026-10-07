@@ -65,7 +65,7 @@ function fixtures({ preserveVirtualizer = false } = {}) {
     '<div style="height:64px">synthetic shell</div><section style="height:256px;width:2048px;overflow:auto">' +
       grid(2048, 1024) +
       "</section>",
-    "html,body{width:2048px;height:1088px}",
+    "html,body{width:2048px}",
     0,
     64,
     2048,
@@ -121,7 +121,16 @@ function fixtures({ preserveVirtualizer = false } = {}) {
     });
   }
   return result.map((f) =>
-    Object.freeze({ ...f, sourceSha256: Q.digest(Buffer.from(f.html)) }),
+    Object.freeze({
+      ...f,
+      ...(f.id === "nested-static-shell"
+        ? {
+            initialGeometry: { width: 2048, height: 320 },
+            expandedGeometry: { width: 2048, height: 1088 },
+          }
+        : {}),
+      sourceSha256: Q.digest(Buffer.from(f.html)),
+    }),
   );
 }
 function routes(list) {
@@ -182,7 +191,34 @@ function verifyPixels(png, fixture) {
       Math.abs(png.height - fixture.height * ratio) <= 1,
     "Native output dimensions/scale mismatch",
   );
-  let samples = 0;
+  const seam =
+    fixture.id === "tile-boundary-8192"
+      ? 8192
+      : fixture.id === "tile-boundary-adaptive"
+        ? 2048
+        : null;
+  if (seam !== null)
+    Q.requireThat(
+      ratio === 1 &&
+        png.width === fixture.width &&
+        png.height === fixture.height &&
+        png.height > seam &&
+        Math.min(8192, Math.floor((8 * 1024 * 1024) / png.width)) === seam,
+      "Named tile case must cross exact production boundary at scale 1",
+    );
+  let samples = 0,
+    seamSamples = 0;
+  if (seam !== null)
+    for (const y of [seam - 1, seam, seam + 1])
+      for (let x = 0; x < png.width; x++) {
+        Q.requireThat(
+          Q.canonical(png.pixel(x, y)).equals(
+            Q.canonical(color(Math.floor(x / CELL), Math.floor(y / CELL))),
+          ),
+          "Independent tile seam pixel mismatch",
+        );
+        seamSamples++;
+      }
   if (fixture.kind === "virtual") {
     for (let row = 0; row < 100; row++) {
       for (const [x, rgb] of [
@@ -207,6 +243,7 @@ function verifyPixels(png, fixture) {
       height: png.height,
       scale: ratio,
       markerSamples: samples,
+      seamSamples,
       passed: true,
     };
   }
@@ -236,6 +273,7 @@ function verifyPixels(png, fixture) {
     height: png.height,
     scale: ratio,
     markerSamples: samples,
+    seamSamples,
     passed: true,
   };
 }

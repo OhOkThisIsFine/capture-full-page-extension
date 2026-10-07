@@ -242,6 +242,78 @@ function prepareRun(options) {
   );
   return session;
 }
+function verifiedDisplayEnvironment(
+  environment,
+  { uid = process.getuid?.(), stat = fs.lstatSync } = {},
+) {
+  Q.requireThat(Number.isSafeInteger(uid), "GUI session owner unavailable");
+  const env = {},
+    inspect = (file) => {
+      Q.requireThat(
+        path.posix.isAbsolute(file) && !/[\x00-\x1f]/.test(file),
+        "Invalid session path",
+      );
+      const value = stat(file);
+      Q.requireThat(!value.isSymbolicLink(), "Linked session binding rejected");
+      return value;
+    };
+  if (environment.XDG_RUNTIME_DIR) {
+    const file = environment.XDG_RUNTIME_DIR,
+      value = inspect(file);
+    Q.requireThat(
+      value.isDirectory() &&
+        value.uid === uid &&
+        (value.mode & 0o777) === 0o700,
+      "Unverified runtime directory",
+    );
+    env.XDG_RUNTIME_DIR = file;
+  }
+  if (environment.DISPLAY) {
+    Q.requireThat(
+      /^:[0-9]{1,5}(?:\.[0-9]{1,2})?$/.test(environment.DISPLAY),
+      "Only local X display allowed",
+    );
+    const number = environment.DISPLAY.slice(1).split(".")[0],
+      socket = inspect("/tmp/.X11-unix/X" + number);
+    Q.requireThat(
+      socket.isSocket() && [0, uid].includes(socket.uid),
+      "Unverified X display socket",
+    );
+    env.DISPLAY = environment.DISPLAY;
+    if (environment.XAUTHORITY) {
+      const value = inspect(environment.XAUTHORITY);
+      Q.requireThat(
+        value.isFile() &&
+          value.uid === uid &&
+          value.size > 0 &&
+          value.size <= 65536 &&
+          (value.mode & 0o022) === 0,
+        "Unverified X authority file",
+      );
+      env.XAUTHORITY = environment.XAUTHORITY;
+    }
+  } else
+    Q.requireThat(
+      !environment.XAUTHORITY,
+      "X authority without local display rejected",
+    );
+  if (environment.WAYLAND_DISPLAY) {
+    Q.requireThat(
+      env.XDG_RUNTIME_DIR &&
+        /^wayland-[0-9]{1,5}$/.test(environment.WAYLAND_DISPLAY),
+      "Invalid Wayland session binding",
+    );
+    const socket = inspect(
+      path.posix.join(env.XDG_RUNTIME_DIR, environment.WAYLAND_DISPLAY),
+    );
+    Q.requireThat(
+      socket.isSocket() && socket.uid === uid,
+      "Unverified Wayland socket",
+    );
+    env.WAYLAND_DISPLAY = environment.WAYLAND_DISPLAY;
+  }
+  return env;
+}
 function cleanEnvironment() {
   const env = {};
   for (const key of [
@@ -254,6 +326,8 @@ function cleanEnvironment() {
     "Path",
   ])
     if (process.env[key]) env[key] = process.env[key];
+  if (process.platform === "linux")
+    Object.assign(env, verifiedDisplayEnvironment(process.env));
   return env;
 }
 function inspectBrowser(executable, target, expected) {
@@ -624,6 +698,33 @@ function validateReviewer(session, raw) {
       s.attemptJournal.every((a) => a.completed),
     "Missing observed per-attempt native timeline",
   );
+  const nestedGeometry = Q.parse(
+    ownedFile(s.root, "evidence/nested-static-shell-geometry.json").bytes,
+  );
+  Q.record(nestedGeometry, [
+    "runId",
+    "sourceRoute",
+    "before",
+    "expanded",
+    "restored",
+    "evidence",
+  ]);
+  const nestedFixture = s.fixtures.find((f) => f.id === "nested-static-shell");
+  Q.requireThat(
+    nestedGeometry.runId === s.runId &&
+      nestedGeometry.sourceRoute === "native-page-geometry-observation" &&
+      Q.canonical(nestedGeometry.before).equals(
+        Q.canonical(nestedFixture.initialGeometry),
+      ) &&
+      Q.canonical(nestedGeometry.expanded).equals(
+        Q.canonical(nestedFixture.expandedGeometry),
+      ) &&
+      Q.canonical(nestedGeometry.restored).equals(
+        Q.canonical(nestedFixture.initialGeometry),
+      ),
+    "Nested fixture native pre/post/restored geometry missing or mismatched",
+  );
+  evidenceRefs(s.root, nestedGeometry.evidence);
   const assigned = new Set(),
     gestures = new Set(),
     fixtureIds = new Set();
@@ -963,5 +1064,6 @@ module.exports = {
   noLinks,
   evidenceRefs,
   cleanEnvironment,
+  verifiedDisplayEnvironment,
   inspectBrowser,
 };
