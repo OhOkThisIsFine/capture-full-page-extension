@@ -1,77 +1,64 @@
 (() => {
   "use strict";
   if (globalThis.__cfpProtocol?.protocolVersion === 1) return;
-  const protocolVersion = 1, MAX_CAPTURE_FRAMES = 20000;
-  const uuid = value => typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
-  function fault(code, message) { return Object.assign(new Error(message), { code }); }
-  function assertFiniteGeometry(value, fieldName, { positive = false, maximum = Number.MAX_SAFE_INTEGER } = {}) {
-    if (!Number.isFinite(value) || value < 0 || (positive && value <= 0) || value > maximum) throw fault("INVALID_GEOMETRY", `Invalid ${fieldName}.`);
+  const protocolVersion = 1;
+  const limits = Object.freeze({MAX_CAPTURE_FRAMES:20000,CAPTURE_INTERVAL_MS:560,MAX_PREPARE_MS:15000,MAX_CAPTURE_MS:600000,MAX_ENCODE_MS:300000,MAX_OPERATION_MS:900000,MAX_DISCOVERED_ELEMENTS:50000,MAX_CAPTURE_ROOTS:128,MAX_MAPPING_NODES:512,MAX_DISCOVERED_EFFECTS:2000,DOM_BATCH_SIZE:256,IDAT_PAYLOAD_BYTES:1048576,MAX_IDAT_CHUNKS:128,MAX_ENCODED_BYTES:128*1024*1024,MAX_FRAME_DATA_URL_CHARS:48*1024*1024,MAX_FRAME_BITMAP_BYTES:64*1024*1024,MAX_ACTIVE_CANVAS_BYTES:96*1024*1024,MAX_SAVED_TILE_BYTES:128*1024*1024,MAX_RETAINED_URLS:4,MAX_RETAINED_URL_BYTES:256*1024*1024,MAX_ACCOUNTED_BYTES:512*1024*1024,MAX_TILE_HEIGHT:8192,MAX_TILE_PIXELS:8*1024*1024,MAX_OUTPUT_PIXELS:200*1024*1024,MAX_CONTROL_BYTES:65536,MAX_CSS:16777216});
+  const messages = Object.freeze({INVALID_ENVELOPE:"Invalid capture protocol envelope.",INVALID_GEOMETRY:"Invalid capture geometry.",INVALID_IDENTITY:"Capture identity does not match.",INVALID_METHOD:"Invalid capture method.",ALREADY_PREPARED:"This capture connection is already prepared.",PROTOCOL_MISMATCH:"Reload the page before capturing.",RESOURCE_LIMIT:"Capture exceeds a resource policy limit.",GEOMETRY_CHANGED:"Page geometry changed during capture.",SCROLL_CHANGED:"Capture scroll position changed.",STALE_DOCUMENT:"The captured document changed.",UNSUPPORTED_TARGET_MAPPING:"The capture target mapping is unsupported.",FRAME_SEQUENCE_MISMATCH:"Capture frame sequence does not match.",FRAME_NOT_ACCEPTED:"The preceding frame has not been acknowledged.",INCOMPLETE_COVERAGE:"Capture pixel coverage is incomplete.",TRANSPORT_FAILED:"Capture transport failed.",SESSION_BUSY:"Capture session is busy.",BITMAP_SCALE_CHANGED:"Screenshot dimensions changed.",FINALIZED_REGION_REVISIT:"Finalized pixels cannot be revisited.",INVALID_SENDER:"Untrusted capture sender.",CAPTURE_FAILED:"Capture failed.",CANCELLED:"Capture was cancelled.",UNSUPPORTED_OCCLUSION:"Repeated occlusion blocks required pixels.",RECOVERY_UNVERIFIED:"Capture recovery is unverified."});
+  const warningCodes = Object.freeze(["IFRAME_VIEWPORT_ONLY","LIVE_MOTION","TARGET_ONLY_SCOPE"]);
+  const capabilities = Object.freeze({chrome:Object.freeze({privateCapture:false,preserveVirtualizer:false}),firefox:Object.freeze({privateCapture:false,preserveVirtualizer:false})});
+  const uuid = value => typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value);
+  function fault(code) { return Object.assign(new Error(messages[code] || messages.CAPTURE_FAILED), {code:messages[code] ? code : "CAPTURE_FAILED"}); }
+  function errorResult(code) { const error = fault(code); return {ok:false,code:error.code,error:error.message}; }
+  function ownRecord(value, fields) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw fault("INVALID_ENVELOPE");
+    const proto=Object.getPrototypeOf(value);
+    // Cross-context native JSON records have another realm's Object.prototype.
+    // Permit that shape only; never read a field before inspecting its descriptor.
+    if(proto!==null){const constructor=Object.getOwnPropertyDescriptor(proto,"constructor");if(Object.getPrototypeOf(proto)!==null || !constructor || !Object.hasOwn(constructor,"value") || typeof constructor.value!=="function" || Function.prototype.toString.call(constructor.value)!=="function Object() { [native code] }")throw fault("INVALID_ENVELOPE");}
+    const keys=Reflect.ownKeys(value);
+    if(keys.length!==fields.length || fields.some(key=>!keys.includes(key)))throw fault("INVALID_ENVELOPE");
+    for(const key of keys){const d=Object.getOwnPropertyDescriptor(value,key);if(!d || !d.enumerable || !Object.hasOwn(d,"value"))throw fault("INVALID_ENVELOPE");}
     return value;
   }
-  function makeTraversal(prep) {
-    if (!uuid(prep?.planId)) throw fault("INVALID_PLAN", "Invalid plan identity.");
-    const width = assertFiniteGeometry(prep.targetWidth, "targetWidth", {positive:true});
-    const height = assertFiniteGeometry(prep.targetHeight, "targetHeight", {positive:true});
-    const viewportWidth = assertFiniteGeometry(prep.position.clientWidth, "clientWidth", {positive:true});
-    const viewportHeight = assertFiniteGeometry(prep.position.clientHeight, "clientHeight", {positive:true});
-    for (const name of ["windowWidth", "windowHeight"]) assertFiniteGeometry(prep[name], name, {positive:true});
-    for (const name of ["sourceLeft", "sourceTop"]) assertFiniteGeometry(prep.position[name], name);
-    const plan = {planId:prep.planId,width,height,viewportWidth,viewportHeight,windowWidth:prep.windowWidth,windowHeight:prep.windowHeight,owner:prep.owner,sessionId:prep.sessionId,documentNonce:prep.documentNonce,direction:prep.direction,signature:prep.signature,maxX:Math.max(0,width-viewportWidth),maxY:Math.max(0,height-viewportHeight),sourceLeft:prep.position.sourceLeft,sourceTop:prep.position.sourceTop};
-    let previous = null, count = 0;
-    while ((previous = nextFrameSpec(plan, previous)) && count <= MAX_CAPTURE_FRAMES) count++;
-    return Object.freeze({...plan,estimatedFrames:count});
+  function uint(value, maximum=Number.MAX_SAFE_INTEGER) {if(!Number.isSafeInteger(value) || value<0 || value>maximum)throw fault("INVALID_GEOMETRY");return value;}
+  function cssInt(value) {uint(value,limits.MAX_CSS);if(value===0)throw fault("INVALID_GEOMETRY");return value;}
+  function assertFiniteGeometry(value,fieldName,{positive=false,maximum=limits.MAX_CSS}={}) {if(!Number.isFinite(value) || value<0 || (positive && value<=0) || value>maximum)throw fault("INVALID_GEOMETRY");return value;}
+  function signedOffset(value){if(!Number.isFinite(value) || Math.abs(value)>limits.MAX_CSS)throw fault("INVALID_GEOMETRY");return value;}
+  function warnings(value) {
+    if(!Array.isArray(value) || Object.getPrototypeOf(Object.getPrototypeOf(Object.getPrototypeOf(value)))!==null || value.length>8)throw fault("INVALID_ENVELOPE");
+    const keys=Reflect.ownKeys(value);
+    if(keys.length!==value.length+1 || keys.some(key=>key!=="length" && !/^(0|[1-9][0-9]*)$/.test(String(key))))throw fault("INVALID_ENVELOPE");
+    const result=[];
+    for(let i=0;i<value.length;i++){const d=Object.getOwnPropertyDescriptor(value,String(i));if(!d || !Object.hasOwn(d,"value") || !warningCodes.includes(d.value) || (i>0 && result[i-1]>=d.value))throw fault("INVALID_ENVELOPE");result.push(d.value);}
+    return Object.freeze(result);
   }
-  function nextFrameSpec(plan, previous) {
-    let sequence = 0, row = 0, column = 0, logicalX = 0, logicalY = 0;
-    if (previous) {
-      sequence = previous.sequence + 1; row = previous.row; column = previous.column + 1; logicalY = previous.logicalY;
-      if (previous.logicalX < plan.maxX) logicalX = Math.min(plan.maxX, previous.logicalX + Math.max(1,plan.viewportWidth-30));
-      else {
-        if (previous.logicalY >= plan.maxY) return null;
-        const overlap = Math.min(previous.row === 0 ? 300 : 190, Math.floor(plan.viewportHeight/2)+1);
-        logicalY = Math.min(plan.maxY,previous.logicalY+Math.max(1,plan.viewportHeight-overlap)); row++; column = 0;
-      }
-    }
-    return Object.freeze({planId:plan.planId,sequence,row,column,logicalX,logicalY,sourceLeft:plan.sourceLeft,sourceTop:plan.sourceTop,clientWidth:plan.viewportWidth,clientHeight:plan.viewportHeight,stickyCrop:0});
-  }
-  const specFields = Object.freeze(["planId","sequence","row","column","logicalX","logicalY","sourceLeft","sourceTop","clientWidth","clientHeight","stickyCrop"]);
-  const sameSpec = (a,b) => !!a && !!b && specFields.every(k=>a[k]===b[k]);
-  function validateSnapshot(plan, spec, snapshot) {
-    const bad = (code,retryable=false) => ({ok:false,code,retryable});
-    if (!snapshot || !spec || snapshot.planId !== plan.planId || snapshot.planId !== spec.planId || !uuid(snapshot.documentNonce)) return bad("STALE_DOCUMENT");
-    for (const key of ["owner","sessionId"]) if (!uuid(snapshot[key]) || (plan[key] && snapshot[key] !== plan[key])) return bad("INVALID_IDENTITY");
-    if (plan.documentNonce && snapshot.documentNonce !== plan.documentNonce) return bad("STALE_DOCUMENT");
-    if (snapshot.sequence !== spec.sequence) return bad("FRAME_ORDER");
-    for (const key of ["geometryGeneration","geometryEpoch","scrollEpoch"]) if (!Number.isSafeInteger(snapshot[key]) || snapshot[key]<0) return bad("INVALID_GEOMETRY");
-    const numeric = ["logicalX","logicalY","nativeScrollLeft","nativeScrollTop","innerWidth","innerHeight","layoutWidth","layoutHeight","scrollWidth","scrollHeight","sourceLeft","sourceTop","clientWidth","clientHeight","devicePixelRatio","visualScale","visualOffsetLeft","visualOffsetTop"];
-    if (numeric.some(key=>!Number.isFinite(snapshot[key]))) return bad("INVALID_GEOMETRY");
-    for (const key of ["sourceLeft","sourceTop","clientWidth","clientHeight"]) if (snapshot[key] !== spec[key]) return bad("GEOMETRY_CHANGED");
-    if (snapshot.innerWidth !== plan.windowWidth || snapshot.innerHeight !== plan.windowHeight || snapshot.clientWidth !== plan.viewportWidth || snapshot.clientHeight !== plan.viewportHeight) return bad("GEOMETRY_CHANGED");
-    const signature = plan.signature;
-    if (signature) for (const key of ["layoutWidth","layoutHeight","devicePixelRatio","visualScale","visualOffsetLeft","visualOffsetTop","geometryGeneration","geometryEpoch"]) if (snapshot[key] !== signature[key]) return bad("GEOMETRY_CHANGED");
-    if (snapshot.visualScale !== 1 || snapshot.visualOffsetLeft !== 0 || snapshot.visualOffsetTop !== 0) return bad("UNSUPPORTED_MAPPING");
-    if (Math.abs(snapshot.logicalX-spec.logicalX)>0.5 || Math.abs(snapshot.logicalY-spec.logicalY)>0.5) return bad("SCROLL_CHANGED",true);
-    if (snapshot.scrollWidth < plan.width || snapshot.scrollHeight < plan.height || (plan.direction === "rtl" && signature && snapshot.scrollWidth !== signature.scrollWidth)) return bad("GEOMETRY_CHANGED");
-    return {ok:true,code:null,retryable:false};
-  }
-  function snapshotPair(plan,spec,pre,post) {
-    for (const s of [pre,post]) { const r=validateSnapshot(plan,spec,s); if(!r.ok)return r; }
-    for (const key of ["documentNonce","geometryGeneration","geometryEpoch","devicePixelRatio","visualScale","visualOffsetLeft","visualOffsetTop"]) if(pre[key]!==post[key])return {ok:false,code:"GEOMETRY_CHANGED",retryable:false};
-    if(pre.scrollEpoch!==post.scrollEpoch || pre.logicalX!==post.logicalX || pre.logicalY!==post.logicalY)return {ok:false,code:"SCROLL_CHANGED",retryable:true};
-    return {ok:true,code:null,retryable:false};
-  }
-  function frameRect(prep,p,bitmapWidth,bitmapHeight) {
-    for(const [key,value] of Object.entries({bitmapWidth,bitmapHeight})) assertFiniteGeometry(value,key,{positive:true});
-    const rx=bitmapWidth/prep.windowWidth, ry=bitmapHeight/prep.windowHeight;
-    for(const key of ["sourceLeft","sourceTop","logicalX","logicalY"])assertFiniteGeometry(p[key],key);
-    for(const key of ["clientWidth","clientHeight"])assertFiniteGeometry(p[key],key,{positive:true});
-    const sx=Math.round(p.sourceLeft*rx), sy=Math.round(p.sourceTop*ry), sourceWidth=Math.round(p.clientWidth*rx), sourceHeight=Math.round(p.clientHeight*ry);
-    if(p.stickyCrop!==0 || sx+sourceWidth>bitmapWidth || sy+sourceHeight>bitmapHeight)throw fault("INVALID_CROP","Frame crop exceeds bitmap.");
-    const dx=Math.round(p.logicalX*rx), dy=Math.round(p.logicalY*ry);
-    const sw=Math.min(sourceWidth,Math.floor(prep.targetWidth*rx)-dx), sh=Math.min(sourceHeight,Math.floor(prep.targetHeight*ry)-dy);
-    if(sw<=0 || sh<=0)throw fault("INVALID_CROP","Frame is outside output.");
-    return {sx,sy,sw,sh,dx,dy};
-  }
-  function errorResult(code,message) { return {ok:false,code,error:message}; }
-  globalThis.__cfpProtocol = Object.freeze({protocolVersion,MAX_CAPTURE_FRAMES,uuid,fault,assertFiniteGeometry,makeTraversal,nextFrameSpec,validateSnapshot,snapshotPair,frameRect,sameSpec,errorResult});
+  function visual(value){if(value===null)return null;ownRecord(value,["scale","offsetLeft","offsetTop","width","height"]);if(value.scale!==1 || Math.abs(value.offsetLeft)>0.5 || Math.abs(value.offsetTop)>0.5)throw fault("UNSUPPORTED_TARGET_MAPPING");for(const key of ["offsetLeft","offsetTop"])signedOffset(value[key]);for(const key of ["width","height"])assertFiniteGeometry(value[key],key,{positive:true});return Object.freeze({...value});}
+  function identity(value){if(value.protocolVersion!==1)throw fault("PROTOCOL_MISMATCH");const tokens=[value.operationId,value.sessionId,value.owner,value.planId,value.documentNonce];if(tokens.some(token=>!uuid(token)) || new Set(tokens).size!==tokens.length)throw fault("INVALID_IDENTITY");}
+  /** @typedef {{protocolVersion:1,operationId:string,sessionId:string,owner:string,planId:string,documentNonce:string,strategy:string,captureScope:string,windowWidth:number,windowHeight:number,layoutWidth:number,layoutHeight:number,targetWidth:number,targetHeight:number,sourceLeft:number,sourceTop:number,clientWidth:number,clientHeight:number,direction:string,writingMode:string,physicalScrollWidth:number,physicalScrollHeight:number,devicePixelRatio:number,visualViewport:Object|null,geometryGeneration:number,warnings:string[]}} Prep */
+  const prepFields=Object.freeze(["protocolVersion","operationId","sessionId","owner","planId","documentNonce","strategy","captureScope","windowWidth","windowHeight","layoutWidth","layoutHeight","targetWidth","targetHeight","sourceLeft","sourceTop","clientWidth","clientHeight","direction","writingMode","physicalScrollWidth","physicalScrollHeight","devicePixelRatio","visualViewport","geometryGeneration","warnings"]);
+  const snapshotFields=Object.freeze(["protocolVersion","operationId","sessionId","owner","planId","documentNonce","sequence","geometryGeneration","nativeScrollLeft","nativeScrollTop","logicalX","logicalY","windowWidth","windowHeight","layoutWidth","layoutHeight","physicalScrollWidth","physicalScrollHeight","sourceLeft","sourceTop","clientWidth","clientHeight","devicePixelRatio","visualViewport","scrollEpoch","geometryEpoch","warnings"]);
+  function validatePrep(value){ownRecord(value,prepFields);identity(value);for(const key of ["windowWidth","windowHeight","layoutWidth","layoutHeight","targetWidth","targetHeight","clientWidth","clientHeight","physicalScrollWidth","physicalScrollHeight"])cssInt(value[key]);for(const key of ["sourceLeft","sourceTop"])assertFiniteGeometry(value[key],key);uint(value.geometryGeneration);if(value.direction!=="ltr" && value.direction!=="rtl")throw fault("INVALID_GEOMETRY");if(value.writingMode!=="horizontal-tb")throw fault("UNSUPPORTED_TARGET_MAPPING");if(!["document","expanded-nested","preserve"].includes(value.strategy) || value.captureScope!==(value.strategy==="preserve"?"target-only":"full-page"))throw fault("INVALID_ENVELOPE");if(value.targetWidth<value.clientWidth || value.targetHeight<value.clientHeight || !Number.isFinite(value.devicePixelRatio) || value.devicePixelRatio<=0 || value.devicePixelRatio>16)throw fault("INVALID_GEOMETRY");return Object.freeze({...value,visualViewport:visual(value.visualViewport),warnings:warnings(value.warnings)});}
+  /** @typedef {{prep:Prep,planId:string,width:number,height:number,viewportWidth:number,viewportHeight:number,maxX:number,maxY:number,columns:number,rows:number,estimatedFrames:number}} TraversalPlan */
+  /** @typedef {{planId:string,sequence:number,row:number,column:number,logicalX:number,logicalY:number,sourceLeft:number,sourceTop:number,clientWidth:number,clientHeight:number,stickyCrop:0}} FrameSpec */
+  /** @typedef {{protocolVersion:1,operationId:string,sessionId:string,owner:string,planId:string,documentNonce:string,sequence:number,geometryGeneration:number,nativeScrollLeft:number,nativeScrollTop:number,logicalX:number,logicalY:number,windowWidth:number,windowHeight:number,layoutWidth:number,layoutHeight:number,physicalScrollWidth:number,physicalScrollHeight:number,sourceLeft:number,sourceTop:number,clientWidth:number,clientHeight:number,devicePixelRatio:number,visualViewport:Object|null,scrollEpoch:number,geometryEpoch:number,warnings:string[]}} Snapshot */
+  /** @typedef {{status:string,restoredCount:number,preservedPageChanges:number,failedCount:number,codes:string[]}} RestoreSummary */
+  const specFields=Object.freeze(["planId","sequence","row","column","logicalX","logicalY","sourceLeft","sourceTop","clientWidth","clientHeight","stickyCrop"]);
+  function makeTraversal(value){const prep=validatePrep(value),width=prep.targetWidth,height=prep.targetHeight,viewportWidth=prep.clientWidth,viewportHeight=prep.clientHeight,maxX=Math.max(0,width-viewportWidth),maxY=Math.max(0,height-viewportHeight),columns=1+Math.ceil(maxX/Math.max(1,viewportWidth-30));if(columns>limits.MAX_CAPTURE_FRAMES)throw fault("RESOURCE_LIMIT");const base={prep,planId:prep.planId,width,height,viewportWidth,viewportHeight,maxX,maxY,columns};let rows=1,y=0;while(y<maxY){y=Math.min(maxY,y+rowStep(viewportHeight,rows-1));rows++;if(rows*columns>limits.MAX_CAPTURE_FRAMES)throw fault("RESOURCE_LIMIT");}return Object.freeze({...base,rows,estimatedFrames:rows*columns});}
+  function rowStep(height,row){return Math.max(1,height-Math.min(row===0?300:190,Math.floor(height/2)+1));}
+  function rowY(plan,row){if(row===0)return 0;const first=rowStep(plan.viewportHeight,0),later=rowStep(plan.viewportHeight,1);return Math.min(plan.maxY,first+(row-1)*later);}
+  function specAt(plan,row,column){return Object.freeze({planId:plan.planId,sequence:row*plan.columns+column,row,column,logicalX:Math.min(plan.maxX,column*Math.max(1,plan.viewportWidth-30)),logicalY:rowY(plan,row),sourceLeft:plan.prep.sourceLeft,sourceTop:plan.prep.sourceTop,clientWidth:plan.viewportWidth,clientHeight:plan.viewportHeight,stickyCrop:0});}
+  function sameSpec(a,b){return !!a && !!b && specFields.every(key=>a[key]===b[key]);}
+  function validateSpec(plan,spec){ownRecord(spec,specFields);for(const key of ["sequence","row","column"])uint(spec[key]);if(spec.row>=plan.rows || spec.column>=plan.columns || !sameSpec(spec,specAt(plan,spec.row,spec.column)))throw fault("FRAME_SEQUENCE_MISMATCH");return spec;}
+  function nextFrameSpec(plan,previous){if(previous===null)return specAt(plan,0,0);validateSpec(plan,previous);if(previous.sequence+1===plan.estimatedFrames)return null;const column=(previous.column+1)%plan.columns,row=previous.row+(column===0?1:0);return specAt(plan,row,column);}
+  function sameVisual(a,b){return a===null || b===null ? a===b : ["scale","offsetLeft","offsetTop","width","height"].every(key=>a[key]===b[key]);}
+  function validateSnapshot(plan,spec,snapshot){try{validateSpec(plan,spec);ownRecord(snapshot,snapshotFields);identity(snapshot);for(const key of ["sequence","geometryGeneration","scrollEpoch","geometryEpoch"])uint(snapshot[key]);for(const key of ["windowWidth","windowHeight","layoutWidth","layoutHeight","physicalScrollWidth","physicalScrollHeight","clientWidth","clientHeight"])cssInt(snapshot[key]);for(const key of ["nativeScrollLeft","nativeScrollTop"])signedOffset(snapshot[key]);for(const key of ["logicalX","logicalY","sourceLeft","sourceTop"])assertFiniteGeometry(snapshot[key],key);warnings(snapshot.warnings);visual(snapshot.visualViewport);if(!Number.isFinite(snapshot.devicePixelRatio) || snapshot.devicePixelRatio<=0 || snapshot.devicePixelRatio>16)throw fault("INVALID_GEOMETRY");const prep=plan.prep;if(snapshot.documentNonce!==prep.documentNonce)throw fault("STALE_DOCUMENT");for(const key of ["operationId","sessionId","owner","planId"])if(snapshot[key]!==prep[key])throw fault("INVALID_IDENTITY");if(snapshot.sequence!==spec.sequence)throw fault("FRAME_SEQUENCE_MISMATCH");for(const key of ["windowWidth","windowHeight","layoutWidth","layoutHeight","physicalScrollWidth","physicalScrollHeight","sourceLeft","sourceTop","clientWidth","clientHeight","devicePixelRatio","geometryGeneration"])if(snapshot[key]!==prep[key])throw fault("GEOMETRY_CHANGED");if(!sameVisual(snapshot.visualViewport,prep.visualViewport))throw fault("GEOMETRY_CHANGED");if(Math.abs(snapshot.logicalX-spec.logicalX)>0.5 || Math.abs(snapshot.logicalY-spec.logicalY)>0.5)throw fault("SCROLL_CHANGED");return {ok:true,code:null,retryable:false};}catch(error){return {ok:false,code:error.code||"INVALID_ENVELOPE",retryable:error.code==="SCROLL_CHANGED"};}}
+  function snapshotPair(plan,spec,pre,post){for(const snapshot of [pre,post]){const result=validateSnapshot(plan,spec,snapshot);if(!result.ok)return result;}if(pre.geometryEpoch!==post.geometryEpoch)return {ok:false,code:"GEOMETRY_CHANGED",retryable:false};if(pre.scrollEpoch!==post.scrollEpoch || pre.logicalX!==post.logicalX || pre.logicalY!==post.logicalY)return {ok:false,code:"SCROLL_CHANGED",retryable:true};return {ok:true,code:null,retryable:false};}
+  /** @typedef {{sx:number,sy:number,sw:number,sh:number,dx:number,dy:number}} PixelRect */
+  function frameRect(value,spec,bitmapWidth,bitmapHeight){const prep=validatePrep(value),plan=makeTraversal(prep);validateSpec(plan,spec);cssBitmap(bitmapWidth,bitmapHeight);const rx=bitmapWidth/prep.windowWidth,ry=bitmapHeight/prep.windowHeight,outputWidth=Math.floor(prep.targetWidth*rx),outputHeight=Math.floor(prep.targetHeight*ry);if(outputWidth<=0 || outputHeight<=0 || outputWidth>32767 || !Number.isSafeInteger(outputWidth*outputHeight) || outputWidth*outputHeight>limits.MAX_OUTPUT_PIXELS)throw fault("RESOURCE_LIMIT");const sx=Math.round(spec.sourceLeft*rx),sy=Math.round(spec.sourceTop*ry),rawW=Math.round(spec.clientWidth*rx),rawH=Math.round(spec.clientHeight*ry),dx=Math.round(spec.logicalX*rx),dy=Math.round(spec.logicalY*ry);if(rawW<=0 || rawH<=0 || sx+rawW>bitmapWidth || sy+rawH>bitmapHeight)throw fault("UNSUPPORTED_TARGET_MAPPING");const sw=Math.min(rawW,outputWidth-dx),sh=Math.min(rawH,outputHeight-dy);if(sw<=0 || sh<=0)throw fault("UNSUPPORTED_TARGET_MAPPING");return Object.freeze({sx,sy,sw,sh,dx,dy});}
+  function cssBitmap(width,height){uint(width);uint(height);const bytes=4*width*height;if(width===0 || height===0 || !Number.isSafeInteger(bytes) || bytes>limits.MAX_FRAME_BITMAP_BYTES)throw fault("RESOURCE_LIMIT");return bytes;}
+  function sameRect(a,b){return a===null || b===null ? a===b : !!a && !!b && ["sx","sy","sw","sh","dx","dy"].every(key=>a[key]===b[key]);}
+  function novelFrameRect(plan,spec,width,height){const rect=frameRect(plan.prep,spec,width,height);const priorColumn=spec.column>0 ? frameRect(plan.prep,specAt(plan,spec.row,spec.column-1),width,height) : null;const priorRow=spec.row>0 ? frameRect(plan.prep,specAt(plan,spec.row-1,0),width,height) : null;const right=priorColumn ? priorColumn.dx+priorColumn.sw : 0,bottom=priorRow ? priorRow.dy+priorRow.sh : 0;if(rect.dx>right || rect.dy>bottom)throw fault("INCOMPLETE_COVERAGE");const dx=Math.max(rect.dx,right),dy=Math.max(rect.dy,bottom),sw=rect.dx+rect.sw-dx,sh=rect.dy+rect.sh-dy;if(sw<=0 || sh<=0)return null;return Object.freeze({sx:rect.sx+dx-rect.dx,sy:rect.sy+dy-rect.dy,sw,sh,dx,dy});}
+  function validateFrameDataUrl(value){if(typeof value!=="string" || value.length>limits.MAX_FRAME_DATA_URL_CHARS)throw fault("RESOURCE_LIMIT");if(!/^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(value))throw fault("INVALID_ENVELOPE");return value;}
+  function getQualifiedCapabilities(target){if(!Object.hasOwn(capabilities,target))throw fault("INVALID_ENVELOPE");return capabilities[target];}
+  globalThis.__cfpProtocol=Object.freeze({protocolVersion,...limits,uuid,fault,errorResult,ownRecord,uint,assertFiniteGeometry,validatePrep,makeTraversal,nextFrameSpec,validateSpec,sameSpec,sameRect,validateSnapshot,snapshotPair,frameRect,novelFrameRect,cssBitmap,validateFrameDataUrl,getQualifiedCapabilities});
 })();

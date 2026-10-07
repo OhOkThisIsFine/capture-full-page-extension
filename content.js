@@ -1,4 +1,5 @@
 (() => {
+  if (window !== window.top) throw new Error("Top-frame capture is required.");
   if (window.__cfpFireStyleInstalled) return;
   const P = globalThis.__cfpProtocol;
   if (!P || P.protocolVersion !== 1) throw new Error("Capture protocol unavailable.");
@@ -7,15 +8,17 @@
   let state = null;
 
   chrome.runtime.onConnect.addListener(port => {
-    if (!port.name.startsWith("cfp:")) return;
+    if(port.sender?.id!==chrome.runtime.id || !port.name.startsWith("cfp:") || !P.uuid(port.name.slice(4)))return;
     const owner = {cancelled:false,context:null};
     let commands = Promise.resolve(), identity = null, lastId = 0;
     const dispatch = async message => {
+      try{P.ownRecord(message,["id","method","protocolVersion","operationId","sessionId","owner","payload"]);}catch{return;}
       const fields = ["operationId","sessionId","owner"];
       if (!message || message.protocolVersion !== 1 || !Number.isSafeInteger(message.id) || message.id<=lastId || fields.some(k=>!P.uuid(message[k]))) return;
       if (!identity) {
         if (message.method !== "prepare" || port.name !== `cfp:${message.sessionId}`) return;
-        identity = Object.fromEntries(fields.map(k=>[k,message[k]]));
+        identity = {protocolVersion:1,...Object.fromEntries(fields.map(k=>[k,message[k]]))};
+        owner.identity=identity;
       }
       if (fields.some(k=>message[k] !== identity[k])) return;
       lastId = message.id;
@@ -23,17 +26,18 @@
       try {
         let result;
         switch(message.method) {
-          case "prepare": result = await prepare(owner,identity); break;
-          case "position": result = await moveTo(owner.context,message.payload); break;
-          case "snapshot": result = snapshot(owner.context,message.payload); break;
+          case "prepare": if(owner.prepared)throw P.fault("ALREADY_PREPARED");owner.prepared=true;result=await prepare(owner,message.payload);break;
+          case "position": result = await moveTo(owner.context,message.payload.spec); break;
+          case "snapshot": result = snapshot(owner.context,message.payload.spec); break;
+          case "accept-frame": result=acceptFrame(owner.context,message.payload);break;
           case "restore": result = await restore(owner.context); break;
           case "cancel": owner.cancelled=true; result = await restore(owner.context); break;
           default: throw P.fault("INVALID_COMMAND","Unknown capture command.");
         }
         port.postMessage({...reply,result});
-      } catch(error) { port.postMessage({...reply,code:error.code || "CAPTURE_FAILED",error:String(error?.message || error)}); }
+      } catch(error) { port.postMessage({...reply,code:error.code || "CAPTURE_FAILED",error:P.errorResult(error.code).error}); }
     };
-    port.onMessage.addListener(message => { commands=commands.then(()=>dispatch(message)).catch(()=>{}); });
+    port.onMessage.addListener(message => { if(message?.method==="cancel"){dispatch(message).catch(()=>{});return;}commands=commands.then(()=>dispatch(message)).catch(()=>{}); });
     port.onDisconnect.addListener(()=>{owner.cancelled=true;restore(owner.context).catch(()=>{});});
   });
 
@@ -43,7 +47,11 @@
     }
   }
 
-  async function prepare(owner = { cancelled: false }, identity = {operationId:crypto.randomUUID(),sessionId:crypto.randomUUID(),owner:crypto.randomUUID()}) {
+  async function prepare(owner = {cancelled:false,identity:{protocolVersion:1,operationId:crypto.randomUUID(),sessionId:crypto.randomUUID(),owner:crypto.randomUUID()}}, options = {strategy:"auto",prepareExpiresAt:Date.now()+15000,operationExpiresAt:Date.now()+900000}) {
+    const identity=owner.identity;
+    P.ownRecord(options,["strategy","prepareExpiresAt","operationExpiresAt"]);
+    if(!["auto","preserve"].includes(options.strategy) || !Number.isFinite(options.prepareExpiresAt) || !Number.isFinite(options.operationExpiresAt))throw P.fault("INVALID_ENVELOPE");
+    if(options.strategy==="preserve" && !P.getQualifiedCapabilities("chrome").preserveVirtualizer)throw P.fault("UNSUPPORTED_TARGET_MAPPING");
     if (state) restore(state);
     if (owner.cancelled) throw new Error("Capture session was cancelled.");
     const context = { owner, identity, planId:crypto.randomUUID(), cancelled: false, rollback: [], scrollRollback: [], hidden: new Map(), changedStyles: [], ownedStyles:[], roots:new WeakSet(), effects:new WeakSet(), listeners:[], observers:[], warnings:new Set(), scrollEpoch:0,geometryEpoch:0,geometryGeneration:0 };
@@ -246,16 +254,19 @@
     checkOwner(context);
     snapshotVisibleElements();
     const viewport = measureViewport(context);
-    context.prep = {protocolVersion:1,...identity,documentNonce,planId:context.planId,
-      windowWidth:window.innerWidth,windowHeight:window.innerHeight,
-      targetWidth:context.targetWidth,targetHeight:context.targetHeight,
-      direction:getComputedStyle(scroller).direction || "ltr",
-      scrollerType:nestedExpansion ? "expanded-nested" : (isDocument ? "document" : "element"),
-      position:{logicalX:0,logicalY:0,...viewport,stickyCrop:0}};
-    context.signature = liveMetrics(context);
-    context.prep.signature = {...context.signature};
-    context.plan = P.makeTraversal(context.prep);
-    if(context.plan.estimatedFrames>P.MAX_CAPTURE_FRAMES) throw P.fault("FRAME_LIMIT","Capture exceeds frame limit.");
+    const metrics=liveMetrics(context);
+    const strategy=isDocument ? (nestedExpansion ? "expanded-nested" : "document") : "preserve";
+    if(strategy==="preserve" && !P.getQualifiedCapabilities("chrome").preserveVirtualizer)throw P.fault("UNSUPPORTED_TARGET_MAPPING");
+    context.prep = P.validatePrep({...identity,documentNonce,planId:context.planId,strategy,
+      captureScope:strategy==="preserve" ? "target-only" : "full-page",
+      windowWidth:window.innerWidth,windowHeight:window.innerHeight,layoutWidth:metrics.layoutWidth,layoutHeight:metrics.layoutHeight,
+      targetWidth:context.targetWidth,targetHeight:context.targetHeight,...viewport,
+      direction:getComputedStyle(scroller).direction || "ltr",writingMode:"horizontal-tb",
+      physicalScrollWidth:metrics.physicalScrollWidth,physicalScrollHeight:metrics.physicalScrollHeight,
+      devicePixelRatio:metrics.devicePixelRatio,visualViewport:metrics.visualViewport,geometryGeneration:context.geometryGeneration,warnings:[...context.warnings].sort().sort()});
+    context.signature={...metrics};
+    context.plan=P.makeTraversal(context.prep);
+    context.lastAcceptedSpec=null;
     installGeometryObservers(context);
     return context.prep;
     } catch (error) {
@@ -294,13 +305,13 @@
       if((css.writingMode && css.writingMode!=="horizontal-tb") || (css.transform && css.transform!=="none")) throw P.fault("UNSUPPORTED_MAPPING","Unsupported capture target mapping.");
     }
     const v=window.visualViewport;
-    if(v && (v.scale!==1 || v.offsetLeft!==0 || v.offsetTop!==0)) throw P.fault("UNSUPPORTED_MAPPING","Pinch zoom mapping is unsupported.");
+    if(v && (v.scale!==1 || Math.abs(v.offsetLeft)>0.5 || Math.abs(v.offsetTop)>0.5)) throw P.fault("UNSUPPORTED_MAPPING","Pinch zoom mapping is unsupported.");
   }
   function liveMetrics(context) {
     const v=window.visualViewport,m=measureDocument(document),p=measureViewport(context),s=context.scroller;
-    return {...p,innerWidth:window.innerWidth,innerHeight:window.innerHeight,layoutWidth:m.viewportWidth,layoutHeight:m.viewportHeight,
-      scrollWidth:s.scrollWidth,scrollHeight:s.scrollHeight,devicePixelRatio:window.devicePixelRatio || 1,
-      visualScale:v?.scale ?? 1,visualOffsetLeft:v?.offsetLeft ?? 0,visualOffsetTop:v?.offsetTop ?? 0,
+    return {...p,windowWidth:window.innerWidth,windowHeight:window.innerHeight,layoutWidth:m.viewportWidth,layoutHeight:m.viewportHeight,
+      physicalScrollWidth:s.scrollWidth,physicalScrollHeight:s.scrollHeight,devicePixelRatio:window.devicePixelRatio || 1,
+      visualViewport:v ? {scale:v.scale,offsetLeft:v.offsetLeft,offsetTop:v.offsetTop,width:v.width,height:v.height} : null,
       geometryGeneration:context.geometryGeneration,geometryEpoch:context.geometryEpoch};
   }
   function installGeometryObservers(context) {
@@ -316,28 +327,49 @@
   }
   function snapshot(context,spec) {
     checkOwner(context);
-    if(!P.sameSpec(spec,context.commandedSpec))throw P.fault("FRAME_ORDER","Snapshot does not match commanded frame.");
+    if(!P.sameSpec(spec,context.commandedSpec))throw P.fault("FRAME_SEQUENCE_MISMATCH","Snapshot does not match commanded frame.");
     assertSupportedMapping(context);
     const metrics=liveMetrics(context),original=context.signature;
-    const keys=["sourceLeft","sourceTop","clientWidth","clientHeight","innerWidth","innerHeight","layoutWidth","layoutHeight","devicePixelRatio","visualScale","visualOffsetLeft","visualOffsetTop"];
+    const keys=["sourceLeft","sourceTop","clientWidth","clientHeight","windowWidth","windowHeight","layoutWidth","layoutHeight","devicePixelRatio","physicalScrollWidth","physicalScrollHeight"];
     if(keys.some(k=>metrics[k]!==original[k])) {context.geometryGeneration++;metrics.geometryGeneration=context.geometryGeneration;}
     const scroll=readLogicalScroll(context);
     return {documentNonce,...context.identity,planId:context.planId,sequence:spec.sequence,...metrics,
       nativeScrollLeft:scroll.nativeX,nativeScrollTop:scroll.nativeY,logicalX:scroll.logicalX,logicalY:scroll.logicalY,
-      scrollEpoch:context.scrollEpoch,warnings:[...context.warnings]};
+      scrollEpoch:context.scrollEpoch,warnings:[...context.warnings].sort()};
   }
   async function moveTo(context,spec) {
     checkOwner(context);
-    const expected=P.nextFrameSpec(context.plan,context.commandedSpec || null);
-    if(!P.sameSpec(spec,expected) && !P.sameSpec(spec,context.commandedSpec))throw P.fault("FRAME_ORDER","Position does not match planned traversal.");
-    if(context.commandedSpec && !P.sameSpec(spec,context.commandedSpec))context.previousSpec=context.commandedSpec;
+    const expected=P.nextFrameSpec(context.plan,context.lastAcceptedSpec);
+    if(!P.sameSpec(spec,expected) && !P.sameSpec(spec,context.commandedSpec))throw P.fault("FRAME_SEQUENCE_MISMATCH","Position does not match planned traversal.");
+    if(context.commandedSpec && !P.sameSpec(spec,context.commandedSpec) && !P.sameSpec(context.commandedSpec,context.lastAcceptedSpec))throw P.fault("FRAME_NOT_ACCEPTED");
     context.commandedSpec=spec;
+    context.provisionalCandidates=new Map();
     discoverCaptureRoots(context,{remaining:12000});
     writeLogicalScroll(context,spec.logicalX,spec.logicalY);
     await settle();checkOwner(context);
     context.currentX=context.scroller.scrollLeft;context.currentY=context.scroller.scrollTop;
     suppressViewportAnchoredElements(spec);
     return snapshot(context,spec);
+  }
+  function acceptFrame(context,payload) {
+    checkOwner(context);
+    P.ownRecord(payload,["spec","bitmapWidth","bitmapHeight","rect","novelRect"]);
+    const {spec,bitmapWidth,bitmapHeight,rect,novelRect}=payload;
+    P.ownRecord(rect,["sx","sy","sw","sh","dx","dy"]);
+    if(novelRect!==null)P.ownRecord(novelRect,["sx","sy","sw","sh","dx","dy"]);
+    P.validateSpec(context.plan,spec);
+    if(!P.sameSpec(spec,context.commandedSpec))throw P.fault("FRAME_SEQUENCE_MISMATCH");
+    const expectedRect=P.frameRect(context.prep,spec,bitmapWidth,bitmapHeight),expectedNovel=P.novelFrameRect(context.plan,spec,bitmapWidth,bitmapHeight);
+    if(!P.sameRect(rect,expectedRect) || !P.sameRect(novelRect,expectedNovel))throw P.fault("INVALID_GEOMETRY");
+    if(context.bitmapWidth!==undefined && (context.bitmapWidth!==bitmapWidth || context.bitmapHeight!==bitmapHeight))throw P.fault("BITMAP_SCALE_CHANGED");
+    if(P.sameSpec(spec,context.lastAcceptedSpec))return {acceptedSequence:spec.sequence};
+    if(!P.sameSpec(spec,P.nextFrameSpec(context.plan,context.lastAcceptedSpec)))throw P.fault("FRAME_SEQUENCE_MISMATCH");
+    context.bitmapWidth=bitmapWidth;context.bitmapHeight=bitmapHeight;
+    context.lastAcceptedSpec=spec;
+    for(const [node,observation] of context.provisionalCandidates || [])context.tracked.set(node,observation);
+    context.provisionalCandidates?.clear();
+    if(novelRect)(context.acceptedRects ||= []).push({x0:novelRect.dx/(bitmapWidth/context.prep.windowWidth),y0:novelRect.dy/(bitmapHeight/context.prep.windowHeight),x1:(novelRect.dx+novelRect.sw)/(bitmapWidth/context.prep.windowWidth),y1:(novelRect.dy+novelRect.sh)/(bitmapHeight/context.prep.windowHeight)});
+    return {acceptedSequence:spec.sequence};
   }
   function getViewportMetrics() {return measureViewport(state);}
 
@@ -533,7 +565,7 @@
       }
     };
     visit(document);
-    if(budget.remaining<=0)context.warnings.add("DISCOVERY_LIMIT");
+    if(budget.remaining<=0)throw P.fault("RESOURCE_LIMIT");
   }
   function restoreOwnedStyles(context) {for(const node of context.ownedStyles)node.remove();context.ownedStyles.length=0;}
   function installCaptureStyles(context) {discoverCaptureRoots(context,{remaining:12000});return context.ownedStyles;}
@@ -706,7 +738,6 @@
 
   function suppressViewportAnchoredElements(spec) {
     const context=state,scroller=context.scroller;
-    if(context.lastPosition && !P.sameSpec(context.lastPosition,spec)) (context.acceptedRects ||= []).push({x0:context.lastPosition.logicalX,y0:context.lastPosition.logicalY,x1:context.lastPosition.logicalX+context.lastPosition.clientWidth,y1:context.lastPosition.logicalY+context.lastPosition.clientHeight});
     let visited=0;
     for(const el of allElements(document.documentElement)) {
       if(++visited>12000)break;
@@ -716,9 +747,9 @@
       const rect=el.getBoundingClientRect();
       if(rect.width<=0 || rect.height<=0 || style.display==="none" || style.visibility==="hidden")continue;
       const previous=context.tracked.get(el);
-      if(spec.sequence===0 || !previous) {context.tracked.set(el,{rect,logicalX:spec.logicalX,logicalY:spec.logicalY,represented:style.position==="fixed" || spec.logicalY===0 || (Math.abs(rect.top-(parseFloat(style.top)||0))>0.5)});continue;}
+      if(spec.sequence===0 || !previous) {context.provisionalCandidates.set(el,{rect,logicalX:spec.logicalX,logicalY:spec.logicalY,represented:style.position==="fixed" || spec.logicalY===0 || (Math.abs(rect.top-(parseFloat(style.top)||0))>0.5)});continue;}
       if(style.position==="sticky" && !previous.represented) {
-        if(Math.abs(rect.top-(parseFloat(style.top)||0))>0.5)previous.represented=true;
+        context.provisionalCandidates.set(el,{...previous,represented:Math.abs(rect.top-(parseFloat(style.top)||0))>0.5});
       }
       if(previous.represented && !context.hidden.has(el))hideElement(el);
       if(Number(getComputedStyle(el).opacity)!==0) {
@@ -770,11 +801,11 @@
   }
 
   async function restore(old = state) {
-    if (!old || old.cancelled) return {acknowledged:true,partial:false,failed:[]};
+    if (!old || old.cancelled) return {status:"acknowledged",restoredCount:0,preservedPageChanges:0,failedCount:0,codes:[]};
     old.cancelled = true;
     if (state === old) state = null;
-    const summary={acknowledged:true,partial:false,failed:[]};
-    const attempt=fn=>{try{fn();}catch{summary.partial=true;summary.failed.push("RESTORE_FAILED");}};
+    const summary={status:"acknowledged",restoredCount:0,preservedPageChanges:0,failedCount:0,codes:[]};
+    const attempt=(fn,code="STYLE_RESTORE_FAILED")=>{try{fn();summary.restoredCount++;}catch{summary.status="partial";summary.failedCount++;if(!summary.codes.includes(code))summary.codes.push(code);}};
     for(const remove of old.listeners)attempt(remove);
     for(const observer of old.observers)attempt(()=>observer.disconnect());
     attempt(()=>restoreOwnedStyles(old));
@@ -785,9 +816,10 @@
     // Restore offsets only after every expanded dimension has been collapsed.
     // Setting scroll offsets forces layout using the restored dimensions.
     for (const undo of old.scrollRollback.reverse()) {
-      attempt(undo);
+      attempt(undo,"SCROLL_RESTORE_FAILED");
     }
     old.scrollRollback.length = 0;
+    summary.codes.sort();
     return summary;
   }
 

@@ -146,14 +146,14 @@ async function captureFullPage(tab, markInitialized) {
     await assertOriginalTabActive(tabId, windowId);
 
     await chrome.scripting.executeScript({
-      target: { tabId },
+      target: {tabId,frameIds:[0]},
       files: ["capture-protocol.js", "content.js"]
     });
 
-    port = chrome.tabs.connect(tabId, { name: `cfp:${sessionId}` });
+    port = chrome.tabs.connect(tabId, {name:`cfp:${sessionId}`,frameId:0});
     rpc = createPortRPC(port,scope);
 
-    const prep = await rpc.call("prepare");
+    const prep = await rpc.call("prepare",{strategy:"auto",prepareExpiresAt:Date.now()+WP.MAX_PREPARE_MS,operationExpiresAt:scope.expiresAt});
     prepared = true;
 
     if (!prep || prep.windowWidth <= 0 || prep.windowHeight <= 0 ||
@@ -172,17 +172,18 @@ async function captureFullPage(tab, markInitialized) {
     while((spec=WP.nextFrameSpec(plan,previousAcceptedSpec))) {
       checkOperation(scope);
       let acquired=null;
+      const frameBudget={remaining:5};
       for(let acquisition=0;acquisition<3;acquisition++) {
         await assertOriginalTabActive(tabId,windowId);
-        const positioned=await rpc.call("position",spec);
+        const positioned=await rpc.call("position",{spec});
         const positionCheck=WP.validateSnapshot(plan,spec,positioned);
         if(!positionCheck.ok && !positionCheck.retryable)throw WP.fault(positionCheck.code,"Position snapshot rejected.");
-        const preSnapshot=await rpc.call("snapshot",spec);
+        const preSnapshot=await rpc.call("snapshot",{spec});
         const preCheck=WP.validateSnapshot(plan,spec,preSnapshot);
         if(!preCheck.ok){if(preCheck.retryable && acquisition<2)continue;throw WP.fault(preCheck.code,"Pre-capture snapshot rejected.");}
-        const dataUrl=await captureVisible(tabId,windowId,scope);
+        const dataUrl=await captureVisible(tabId,windowId,scope,frameBudget);
         await assertOriginalTabActive(tabId,windowId);checkOperation(scope);
-        const postSnapshot=await rpc.call("snapshot",spec);
+        const postSnapshot=await rpc.call("snapshot",{spec});
         const validation=WP.snapshotPair(plan,spec,preSnapshot,postSnapshot);
         if(!validation.ok){if(validation.retryable && acquisition<2)continue;throw WP.fault(validation.code,"Capture geometry changed.");}
         acquired={spec,preSnapshot,postSnapshot,dataUrl};break;
@@ -190,8 +191,12 @@ async function captureFullPage(tab, markInitialized) {
       if(!acquired)throw WP.fault("SCROLL_CHANGED","Capture scroll retries exhausted.");
       const result=await callCompositor(scope,"frame",acquired); // timeout is ambiguous: never replay
       throwIfOffscreenError(result);
-      if(result.acceptedSequence!==spec.sequence)throw WP.fault("FRAME_ORDER","Unexpected accepted frame sequence.");
-      frameCount++;previousAcceptedSpec=spec;
+      if(result.acceptedSequence!==spec.sequence)throw WP.fault("FRAME_SEQUENCE_MISMATCH","Unexpected accepted frame sequence.");
+      if(!WP.sameRect(result.rect,WP.frameRect(prep,spec,result.bitmapWidth,result.bitmapHeight)) || !WP.sameRect(result.novelRect,WP.novelFrameRect(plan,spec,result.bitmapWidth,result.bitmapHeight)))throw WP.fault("INVALID_GEOMETRY");
+      frameCount++;
+      const accepted=await rpc.call("accept-frame",{spec,bitmapWidth:result.bitmapWidth,bitmapHeight:result.bitmapHeight,rect:result.rect,novelRect:result.novelRect});
+      if(accepted.acceptedSequence!==spec.sequence)throw WP.fault("FRAME_SEQUENCE_MISMATCH");
+      previousAcceptedSpec=spec;
     }
 
     if (frameCount === 0) throw new Error("No screenshot frames were captured.");
@@ -199,7 +204,7 @@ async function captureFullPage(tab, markInitialized) {
     // The page no longer needs to remain expanded/scrolled once every viewport
     // has been captured. Restore it before the potentially expensive PNG encode.
     try {
-      await rpc.call("restore");
+      await rpc.call("restore",{reason:"success"});
       prepared = false;
     } catch (error) {
       console.warn("Capture Full Page could not restore the page early:", error);
@@ -232,7 +237,7 @@ async function captureFullPage(tab, markInitialized) {
     chrome.downloads.onChanged.addListener(listener);
   } finally {
     if (prepared && rpc) {
-      await rpc.call("restore").catch(() => {});
+      await rpc.call("restore",{reason:"failure"}).catch(() => {});
     }
 
     try { port?.disconnect(); } catch {}
@@ -339,7 +344,7 @@ function checkOperation(scope) {
   if(activeCapture?.cancelReason)throw WP.fault("CANCELLED",activeCapture.cancelReason);
   if(Date.now()>=scope.expiresAt)throw WP.fault("DEADLINE_EXCEEDED","Capture deadline exceeded.");
 }
-async function captureVisible(tabId, windowId,scope) {
+async function captureVisible(tabId, windowId,scope,frameBudget={remaining:5}) {
   let lastError = null;
 
   for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -348,7 +353,8 @@ async function captureVisible(tabId, windowId,scope) {
     const delay=Math.max(0,lastCaptureInvocationStart+CAPTURE_DELAY_MS-Date.now());
     if(delay)await sleep(delay);
     checkOperation(scope);await assertOriginalTabActive(tabId,windowId);
-    lastCaptureInvocationStart=Date.now();
+    if(frameBudget.remaining<=0)throw WP.fault("RESOURCE_LIMIT");
+    frameBudget.remaining--;lastCaptureInvocationStart=Date.now();
     try {
       const dataUrl = await chrome.tabs.captureVisibleTab(windowId, { format: "png" });
       await assertOriginalTabActive(tabId, windowId);
@@ -377,7 +383,7 @@ async function callCompositor(scope,type,payload={}) {
   let timer;
   try {
     const operation=hasSharedCompositor() ? globalThis.__cfpCompositorHandle(message) : chrome.runtime.sendMessage(message);
-    const result=await Promise.race([operation,new Promise((_,reject)=>{timer=setTimeout(()=>reject(WP.fault("COMPOSITOR_TIMEOUT","Compositor operation timed out.")),type==="finish"?10*60*1000:60*1000);})]);
+    const result=await Promise.race([operation,new Promise((_,reject)=>{timer=setTimeout(()=>reject(WP.fault("TRANSPORT_FAILED","Compositor operation timed out.")),type==="finish"?10*60*1000:60*1000);})]);
     const fields=context ? ["target","type","protocolVersion","requestId","requesterOwner"] : ["target","type","protocolVersion","requestId","operationId","sessionId","owner"];
     if(message.intentId!==undefined)fields.push("intentId");
     if(!result || fields.some(k=>message[k]!==result[k]))throw WP.fault("INVALID_RESPONSE","Compositor response identity mismatch.");

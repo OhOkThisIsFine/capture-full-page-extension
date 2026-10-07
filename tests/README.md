@@ -115,3 +115,25 @@ qualify the locked release toolchain, install an extension, or establish native
 browser capture behavior. It requires Bash (Git Bash on Windows, or set
 `CFP_BASH_EXECUTABLE`). The intentionally failing fixture ends in `.cjs` rather
 than `.test.cjs` so the ordinary test glob does not collect it directly.
+
+
+## Draft protocol geometry checkpoint (not release qualification)
+
+The integration branch migrates Prep/Snapshot/TraversalPlan geometry records,
+strict numeric/UUID/accessor checks, helper load order, top-frame targeting,
+first-writer rectangles and content accept-frame acknowledgments together.
+`protocol-geometry.test.cjs` exercises these production helpers/dispatchers with
+synthetic primitives, including independent per-pixel write ownership, ACK loss,
+physical growth/shrinkage, separate complete data-URL/decoded bitmap limits, and
+five total capture calls per spec across retries. All source tests remain
+credential-free. No direct-browser or native-extension result is inferred.
+
+This checkpoint is incomplete. The canonical P3 resource/deadline/finish leases,
+P4 armed output ledger and one-shot normal adapter, and P5 recovery/notification,
+popup/status and exact envelope migration are still required. The preserved old
+revoke/download lifecycle is draft residue, not an approved compatibility seam.
+G1-G5 mapping/occlusion/restore ownership and R2 bounded effect enumeration also
+remain unqualified. Private/preserve capability literals stay false; their
+complete pre-injection admission checks are still part of the coordinated work.
+Do not merge, tag, install, activate or release this branch from synthetic tests.
+Real Q1/Q3/Q4-normal/Q5/Q6 and the separate Q7a toolchain gates remain unrun.

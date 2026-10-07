@@ -21,7 +21,7 @@ function envelope(message) {
   return Object.fromEntries(keys.map(k=>[k,message[k]]));
 }
 function authenticatedWorker(sender) {
-  return sender?.id===chrome.runtime.id && !sender.tab && (!sender.url || sender.url===chrome.runtime.getURL("service-worker.js"));
+  return sender?.id===chrome.runtime.id && !sender.tab && sender.url===chrome.runtime.getURL("service-worker.js");
 }
 chrome.runtime.onMessage.addListener((message,sender,sendResponse)=>{
   if(message?.target!=="cfp-offscreen")return;
@@ -31,7 +31,7 @@ chrome.runtime.onMessage.addListener((message,sender,sendResponse)=>{
 async function trustedBackgroundEntry(message) {
   let echo;
   try {echo=envelope(message);} catch {return {target:"cfp-offscreen",type:"protocol-error",protocolVersion:1,requestId:P.uuid(message?.requestId)?message.requestId:null,...P.errorResult("INVALID_ENVELOPE","Invalid compositor envelope.")};}
-  try {return {...echo,...await handle(message)};} catch(error){return {...echo,...P.errorResult(error.code || "CAPTURE_FAILED",String(error?.message || error))};}
+  try {return {...echo,...await handle(message)};} catch(error){return {...echo,...P.errorResult(error.code || "CAPTURE_FAILED")};}
 }
 function assertSessionIdentity(s,message) {
   if(!s || ["operationId","sessionId","owner"].some(k=>s[k]!==message[k]))throw P.fault("INVALID_IDENTITY","Capture session identity mismatch.");
@@ -57,7 +57,7 @@ async function handle(message) {
   if(s.busy)throw P.fault("SESSION_BUSY","Capture session is busy.");
   const token={};s.busy=token;
   try {return message.type==="frame" ? await addFrame(message) : await finish(message.sessionId,message.intentId);}
-  catch(error){if(error.code!=="FRAME_ORDER" && error.code!=="SCROLL_CHANGED" && error.code!=="STALE_DOCUMENT" && error.code!=="GEOMETRY_CHANGED")cleanupSession(message.sessionId);throw error;}
+  catch(error){if(error.code!=="FRAME_SEQUENCE_MISMATCH" && error.code!=="SCROLL_CHANGED" && error.code!=="STALE_DOCUMENT" && error.code!=="GEOMETRY_CHANGED")cleanupSession(message.sessionId);throw error;}
   finally {if(s.busy===token)s.busy=null;}
 }
 
@@ -70,6 +70,7 @@ function createSession(prep, owner) {
     finalizedThroughIndex:-1,
     firstBitmapWidth:null,
     firstBitmapHeight:null,
+    currentRow:-1,priorRowsBottom:0,rowRight:0,rowBottom:0,rowDestY:0,
     cancelled: false,
     controller: new AbortController(),
     ratioX: null,
@@ -105,30 +106,41 @@ async function addFrame(message) {
   renewSession(message.sessionId);
 
   const expected=P.nextFrameSpec(s.plan,s.lastAcceptedSpec);
-  if(!P.sameSpec(message.spec,expected))throw P.fault("FRAME_ORDER","Unexpected frame sequence or coordinates.");
+  if(!P.sameSpec(message.spec,expected))throw P.fault("FRAME_SEQUENCE_MISMATCH","Unexpected frame sequence or coordinates.");
   const validation=P.snapshotPair(s.plan,message.spec,message.preSnapshot,message.postSnapshot);
   if(!validation.ok)throw P.fault(validation.code,"Frame snapshot rejected.");
-  if(typeof message.dataUrl!=="string" || !/^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(message.dataUrl))throw P.fault("INVALID_FRAME","Expected a PNG data URL.");
+  P.validateFrameDataUrl(message.dataUrl);
   const response = await fetch(message.dataUrl, {signal:s.controller.signal});
   checkSession(s);if(!response.ok)throw new Error("Could not read captured frame.");
   const blob=await response.blob();checkSession(s);
   const bitmap=await createImageBitmap(blob);
   try {
-    checkSession(s);
+    checkSession(s);P.cssBitmap(bitmap.width,bitmap.height);
     if(s.ratioX==null)initializeGeometry(s,bitmap);
     else if(bitmap.width!==s.firstBitmapWidth || bitmap.height!==s.firstBitmapHeight)throw P.fault("BITMAP_SCALE_CHANGED","Screenshot dimensions changed.");
     for(const snap of [message.preSnapshot,message.postSnapshot]) {
-      if(Math.round(snap.logicalX*s.ratioX)!==Math.round(message.spec.logicalX*s.ratioX) || Math.round(snap.logicalY*s.ratioY)!==Math.round(message.spec.logicalY*s.ratioY))throw P.fault("SCROLL_CHANGED","Scroll offset changes device pixel placement.");
+      if(Math.round(snap.logicalX*s.ratioX)!==Math.round(message.spec.logicalX*s.ratioX) || Math.round(snap.logicalY*s.ratioY)!==Math.round(message.spec.logicalY*s.ratioY) || Math.round(snap.sourceLeft*s.ratioX)!==Math.round(message.spec.sourceLeft*s.ratioX) || Math.round(snap.sourceTop*s.ratioY)!==Math.round(message.spec.sourceTop*s.ratioY))throw P.fault("SCROLL_CHANGED","Scroll offset changes device pixel placement.");
     }
-    const {sx,sy,sw,sh,dx:destX,dy:destY}=P.frameRect(s.prep,message.spec,bitmap.width,bitmap.height);
-    if(s.lastAcceptedSpec && message.spec.row>s.lastAcceptedSpec.row)await finalizeTilesBefore(s,destY);
+    const rect=P.frameRect(s.prep,message.spec,bitmap.width,bitmap.height);
+    const novelRect=P.novelFrameRect(s.plan,message.spec,bitmap.width,bitmap.height);
+    const {dx:destX,dy:destY}=rect;
+    let priorRowsBottom=s.priorRowsBottom,rowRight=s.rowRight;
+    if(message.spec.row!==s.currentRow) {
+      if(message.spec.row!==s.currentRow+1 || (s.currentRow>=0 && s.rowRight!==s.widthPx))throw P.fault("INCOMPLETE_COVERAGE");
+      priorRowsBottom=s.rowBottom;rowRight=0;
+      if(s.currentRow>=0)await finalizeTilesBefore(s,destY);
+    }else if(destY!==s.rowDestY || destY+rect.sh!==s.rowBottom)throw P.fault("INCOMPLETE_COVERAGE");
+    if(rect.dx>rowRight || rect.dy>priorRowsBottom || (message.spec.column===0 && rect.dx!==0))throw P.fault("INCOMPLETE_COVERAGE");
+    const left=Math.max(rect.dx,rowRight),top=Math.max(rect.dy,priorRowsBottom),width=rect.dx+rect.sw-left,height=rect.dy+rect.sh-top;
+    const localNovel=width<=0 || height<=0 ? null : {sx:rect.sx+left-rect.dx,sy:rect.sy+top-rect.dy,sw:width,sh:height,dx:left,dy:top};
+    if(!P.sameRect(novelRect,localNovel))throw P.fault("INCOMPLETE_COVERAGE");
     checkSession(s);
-    drawAcrossTiles(s,bitmap,sx,sy,sw,sh,destX,destY);
+    if(novelRect)drawAcrossTiles(s,bitmap,novelRect.sx,novelRect.sy,novelRect.sw,novelRect.sh,novelRect.dx,novelRect.dy);
     checkSession(s);
-    s.lastAcceptedSpec=message.spec;
+    Object.assign(s,{currentRow:message.spec.row,priorRowsBottom,rowRight:Math.max(rowRight,rect.dx+rect.sw),rowBottom:rect.dy+rect.sh,rowDestY:rect.dy,lastAcceptedSpec:message.spec});
     s.lastDestY = Math.max(s.lastDestY, destY);
     s.frames += 1;
-    return { ok: true, acceptedSequence:message.spec.sequence, ratioX: s.ratioX, ratioY: s.ratioY };
+    return {ok:true,acceptedSequence:message.spec.sequence,bitmapWidth:bitmap.width,bitmapHeight:bitmap.height,rect,novelRect};
   } finally {
     bitmap.close();
   }
@@ -144,9 +156,10 @@ function initializeGeometry(s, bitmap) {
     throw new Error("Invalid screenshot scale ratio.");
   }
 
-  s.widthPx = Math.max(1, Math.floor(s.prep.targetWidth * s.ratioX));
-  s.heightPx = Math.max(1, Math.floor(s.prep.targetHeight * s.ratioY));
+  s.widthPx = Math.floor(s.prep.targetWidth*s.ratioX);
+  s.heightPx = Math.floor(s.prep.targetHeight*s.ratioY);
 
+  if(s.widthPx<=0 || s.heightPx<=0)throw P.fault("RESOURCE_LIMIT");
   if (s.widthPx > 32767) {
     throw new Error(`Page is too wide to encode (${s.widthPx}px).`);
   }
@@ -254,6 +267,7 @@ async function finish(sessionId,intentId) {
   if(P.nextFrameSpec(s.plan,s.lastAcceptedSpec)!==null)throw P.fault("MISSING_FRAMES","Not all planned frames were accepted.");
   if (!s.frames || s.ratioX == null) throw new Error("No screenshot frames were captured.");
 
+  if(s.rowRight!==s.widthPx || s.rowBottom!==s.heightPx)throw P.fault("INCOMPLETE_COVERAGE");
   const activeIndexes = [...s.activeTiles.keys()].sort((a, b) => a - b);
   for (const index of activeIndexes) await finalizeTile(s, index);
 
