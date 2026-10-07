@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "kind": "source-only-independent-review-fixes",
+  "sourceCommit": "7076ae5b8fea3b7111758b80ec545bb516662dc5",
+  "shippingSourceCommit": "0da8512bc743807ab3eba27ee1416e670b17cbd9",
+  "tests": {
+    "passed": 159,
+    "failed": 0,
+    "skipped": 0,
+    "cancelled": 0,
+    "harnessTests": 29,
+    "scope": "Exact Git archive and fresh current source, synthetic inputs/process doubles, real network and uncontrolled subprocess denied"
+  },
+  "fixes": [
+    "Exact scale1 and1024x8300/4096x2200 production tile geometry",
+    "Every pixel at seam-1/seam/seam+1; CRC-valid center-preserving seam/edge mutants",
+    "Natural nested320-to1088 expansion; separately observed pre/post/restored geometry and exact evidence hash",
+    "Verified local Linux display bindings without broad environment inheritance",
+    "Minimum15000ms observation plus independent nonrenewable overall deadline; delayed-tick control"
+  ],
+  "negativeControls": [
+    {
+      "name": "seam-samples",
+      "sourceCommit": "7076ae5b8fea3b7111758b80ec545bb516662dc5",
+      "exitCode": 1,
+      "detected": true
+    },
+    {
+      "name": "nested-growth",
+      "sourceCommit": "7076ae5b8fea3b7111758b80ec545bb516662dc5",
+      "exitCode": 1,
+      "detected": true
+    },
+    {
+      "name": "authority-owner",
+      "sourceCommit": "7076ae5b8fea3b7111758b80ec545bb516662dc5",
+      "exitCode": 1,
+      "detected": true
+    },
+    {
+      "name": "narrow-final-tick",
+      "sourceCommit": "7076ae5b8fea3b7111758b80ec545bb516662dc5",
+      "exitCode": 1,
+      "detected": true
+    }
+  ],
+  "shippingPayloadChanged": false,
+  "nativeBrowserLaunch": "not-run",
+  "nativeQualification": "not-run",
+  "mergeDeploymentStores": "not-run",
+  "approvalReview": {
+    "initialEvidenceCommitPush": "rejected",
+    "reason": "Historical pre-fix verifiedDisplayEnvironment failure interpreted as unresolved",
+    "resolution": "Repaired export verified; current source rerun passes159/159; fresh receipt independently inspected before retry"
+  },
+  "receipts": [
+    {
+      "path": "qa-review-final-exact-tests.log",
+      "sha256": "6f8400f35994ceea451450e36292a2fe7ba7c20c667cdd507b67e1e5db4cd543"
+    },
+    {
+      "path": "qa-review-current-after-review.log",
+      "sha256": "2d37eeec5ad0e3eeee630147acf3c21391bbd70c82f61419818a23bc944df45f"
+    },
+    {
+      "path": "qa-review-final-focused.log",
+      "sha256": "27d4f23cde8550f37044a4b8fb8f14b0f831167e2eca32f0f6dd02b29e1f489d"
+    },
+    {
+      "path": "qa-review-final-controls/results.json",
+      "sha256": "37e6adbd56a573834842fdb41d62a6a167ae740767540d2f6dc81117e2714243"
+    }
+  ],
+  "remaining": [
+    "Independent source review",
+    "Canonical approved package/inventory/toolchain and supported browser/OS",
+    "Separate genuine native GUI/API/pixels/downloads/geometry/restoration/cleanup/RSS qualification",
+    "Parent coordinated merge/release"
+  ]
+}

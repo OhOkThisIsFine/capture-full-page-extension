@@ -1,3 +1,5 @@
+Historical initial source checkpoint. The independently reviewed boundary, fixture, GUI environment and timing cases are superseded by [QA review fixes](qa-review-fixes.md).
+
 # Bounded pre-submit QA harness source evidence
 
 This source deliverable resolves the missing local validator, unsigned-candidate verifier,

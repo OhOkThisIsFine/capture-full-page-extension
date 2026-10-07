@@ -134,3 +134,9 @@ Wayland requires current-user0700 runtime directory and current-user socket. Rem
 foreign owners, unsafe modes and linked leaf bindings fail before browser launch. No general
 session bus, provider secret or broad environment is inherited. Native GUI connection remains
 unrun in this source-only follow-up.
+
+For the nested shell case, use an observed CSS viewport height <=320px and width <=2048px
+before measuring document geometry. The collapsed document then measures320px rather than
+being enlarged to a taller layout viewport; expansion measures1088px. Record the actual viewport
+with the pre/post/restored geometry evidence. An expected synthetic declaration is not an
+observed native document measurement.
