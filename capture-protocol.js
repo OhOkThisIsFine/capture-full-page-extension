@@ -38,6 +38,7 @@
     ALREADY_PREPARED: "This capture connection is already prepared.",
     PROTOCOL_MISMATCH: "Reload the page before capturing.",
     RESOURCE_LIMIT: "Capture exceeds a resource policy limit.",
+    DOCUMENT_REPLACED: "The captured document was replaced.",
     GEOMETRY_CHANGED: "Page geometry changed during capture.",
     SCROLL_CHANGED: "Capture scroll position changed.",
     STALE_DOCUMENT: "The captured document changed.",
@@ -968,9 +969,15 @@
         .map((key) => [key, value[key]]),
     );
   }
+  function makeCompositorResponseValidator(request) {
+    const echo = Object.freeze(validateCompositorRequest(request));
+    return (value) => validateCompositorResponseEcho(echo, value);
+  }
   function validateCompositorResponse(request, value) {
-    const echo = validateCompositorRequest(request),
-      keys = Object.keys(echo);
+    return makeCompositorResponseValidator(request)(value);
+  }
+  function validateCompositorResponseEcho(echo, value) {
+    const keys = Object.keys(echo);
     ownRecord(value, Reflect.ownKeys(value || {}));
     if (!value || keys.some((key) => value[key] !== echo[key]))
       throw fault("INVALID_IDENTITY");
@@ -985,7 +992,7 @@
     }
     if (value.ok !== true) throw fault("INVALID_ENVELOPE");
     let fields = [];
-    switch (request.type) {
+    switch (echo.type) {
       case "start":
         fields = [];
         break;
@@ -1060,7 +1067,7 @@
           enumValue(value.activeSession.phase, ["capturing", "encoding"]);
           uint(value.activeSession.expiresAt);
         }
-        if (request.type === "download-list") {
+        if (echo.type === "download-list") {
           fields.push("entries");
           if (!Array.isArray(value.entries) || value.entries.length > 24)
             throw fault("RESOURCE_LIMIT");
@@ -1111,6 +1118,118 @@
     utf8(JSON.stringify(value), limits.MAX_CONTROL_BYTES);
     return { ...value };
   }
+  const restoreCodes = Object.freeze([
+    "DOCUMENT_REPLACED",
+    "NODE_REPLACED",
+    "PAGE_STYLE_CHANGED",
+    "PAGE_SCROLL_CHANGED",
+    "STYLE_REMOVE_FAILED",
+    "STYLE_RESTORE_FAILED",
+    "SCROLL_RESTORE_FAILED",
+    "PORT_DISCONNECTED",
+  ]);
+  const publicPhases = Object.freeze([
+    "idle",
+    "preparing",
+    "capturing",
+    "encoding",
+    "initiating",
+    "saving",
+    "paused",
+    "resumable",
+    "saved",
+    "cancelled",
+    "failed",
+    "uncertain",
+    "expired",
+  ]);
+  function validateRestoreSummary(value) {
+    ownRecord(value, [
+      "status",
+      "restoredCount",
+      "preservedPageChanges",
+      "failedCount",
+      "codes",
+    ]);
+    enumValue(value.status, [
+      "acknowledged",
+      "partial",
+      "failed",
+      "unverified",
+    ]);
+    for (const key of ["restoredCount", "preservedPageChanges", "failedCount"])
+      uint(value[key]);
+    if (
+      !Array.isArray(value.codes) ||
+      value.codes.length > 8 ||
+      new Set(value.codes).size !== value.codes.length ||
+      value.codes.some((code) => !restoreCodes.includes(code))
+    )
+      throw fault("INVALID_ENVELOPE");
+    if (
+      value.status === "unverified" &&
+      (value.restoredCount || value.preservedPageChanges || value.failedCount)
+    )
+      throw fault("INVALID_ENVELOPE");
+    return value;
+  }
+  function validatePopupRequest(value) {
+    const type = Object.getOwnPropertyDescriptor(value || {}, "type")?.value;
+    enumValue(type, ["capture-active-tab", "capture-status", "capture-cancel"]);
+    ownRecord(value, [
+      "type",
+      "requestId",
+      "windowId",
+      ...(type === "capture-cancel" ? ["tabId", "operationId"] : []),
+    ]);
+    if (!uuid(value.requestId)) throw fault("INVALID_IDENTITY");
+    uint(value.windowId);
+    if (type === "capture-cancel") {
+      uint(value.tabId);
+      if (!uuid(value.operationId)) throw fault("INVALID_IDENTITY");
+    }
+    return value;
+  }
+  function validatePublicStatus(value) {
+    ownRecord(value, [
+      "operationId",
+      "tabId",
+      "windowId",
+      "incognito",
+      "phase",
+      "acceptedFrames",
+      "attemptedFrames",
+      "width",
+      "height",
+      "warnings",
+      "code",
+      "text",
+      "restoration",
+    ]);
+    if (value.operationId !== null && !uuid(value.operationId))
+      throw fault("INVALID_IDENTITY");
+    uint(value.tabId);
+    uint(value.windowId);
+    if (typeof value.incognito !== "boolean") throw fault("INVALID_ENVELOPE");
+    enumValue(value.phase, publicPhases);
+    uint(value.acceptedFrames, limits.MAX_CAPTURE_FRAMES);
+    uint(value.attemptedFrames, limits.MAX_CAPTURE_FRAMES * 5);
+    for (const key of ["width", "height"])
+      if (value[key] !== null) uint(value[key], limits.MAX_CSS);
+    if (
+      !Array.isArray(value.warnings) ||
+      value.warnings.length > 3 ||
+      new Set(value.warnings).size !== value.warnings.length ||
+      value.warnings.some((code) => !warningCodes.includes(code))
+    )
+      throw fault("INVALID_ENVELOPE");
+    if (value.code !== null && !Object.hasOwn(messages, value.code))
+      throw fault("INVALID_ENVELOPE");
+    utf8(value.text, 256);
+    if (value.restoration !== null) validateRestoreSummary(value.restoration);
+    utf8(JSON.stringify(value), 1024);
+    return value;
+  }
   globalThis.__cfpProtocol = Object.freeze({
     protocolVersion,
     ...limits,
@@ -1136,8 +1255,13 @@
     cancelReasons,
     contextKey,
     validateNotification,
+    validateRestoreSummary,
+    validatePopupRequest,
+    validatePublicStatus,
+    publicPhases,
     validateOutputRecord,
     validateCompositorRequest,
     validateCompositorResponse,
+    makeCompositorResponseValidator,
   });
 })();

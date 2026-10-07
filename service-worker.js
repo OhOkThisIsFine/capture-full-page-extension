@@ -14,6 +14,7 @@ let compositorContext = null;
 
 let activeCapture = null;
 let offscreenCreation = null;
+let offscreenClosing = null;
 
 function installMenu() {
   chrome.contextMenus.removeAll(() => {
@@ -30,8 +31,8 @@ chrome.runtime.onStartup.addListener(installMenu);
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId !== MENU_ID) return;
-  const initialized = startCapture(tab);
-  initialized?.catch(() => {});
+  const handle = startCapture(tab);
+  handle?.initialized.catch(() => {});
 });
 
 const liveScopes = new WeakSet(),
@@ -88,6 +89,7 @@ function latchSourceLoss(operation, reason) {
     operation.sourceLost = true;
     operation.cancelReason = reason;
     operation.controller?.abort();
+    abortOffscreenSession(operation).catch(() => {});
   }
 }
 chrome.tabs.onActivated.addListener((info) => {
@@ -249,6 +251,7 @@ function reconcileOwnedDownloads() {
       reconcileDirty = false;
       const entries = await listOutputs();
       for (const entry of entries) {
+        projectOwnedStatus(entry);
         if (entry.kind === "output" && entry.sourceState !== "armed") continue;
         let scope = ownedOutputs.get(entry.intentId);
         if (!scope) {
@@ -292,6 +295,7 @@ function reconcileOwnedDownloads() {
               item,
             })
           ).entry;
+          projectOwnedStatus(updated);
           if (
             updated.kind === "output" &&
             ["complete", "interrupted-final"].includes(updated.downloadState)
@@ -330,7 +334,7 @@ for (const event of [downloadApi.onCreated, downloadApi.onChanged])
 function invokeDownloadOnce(operation, options) {
   checkOperation(operation);
   if (operation.initiationAttempted) throw WP.fault("ALREADY_STARTED");
-  operation.phase = "initiating";
+  setOperationState(operation, "initiating");
   operation.initiationAttempted = true;
   try {
     return { promise: downloadApi.download(options) };
@@ -351,6 +355,7 @@ async function observeDownloadInitiation(operation, invocation) {
           downloadId: result.value,
           basis: "api-result",
         }));
+        setOperationState(operation, "saving");
         await reconcileOwnedDownloads();
       } else {
         const apiOutcome =
@@ -369,6 +374,7 @@ async function observeDownloadInitiation(operation, invocation) {
           apiOutcome,
           code,
         }));
+        setOperationState(operation, "uncertain", { code });
         await reconcileOwnedDownloads();
       }
     } catch {}
@@ -436,60 +442,319 @@ async function recoverCompositor() {
   throw WP.fault("STALE_RECOVERY");
 }
 
+const operationStates = new Map(),
+  actionUpdates = new Map();
+function getOperationKey(tabId, incognito) {
+  return `${tabId}:${incognito ? "private" : "normal"}`;
+}
+function publicText(phase, count, code) {
+  return {
+    idle: "Ready to capture",
+    preparing: "Preparing capture",
+    capturing: `Capturing \u00b7 ${count} frames`,
+    encoding: "Encoding PNG",
+    initiating: "Saving PNG",
+    saving: "Saving PNG",
+    paused: "Download paused",
+    resumable: "Download interrupted; resumption may be available",
+    saved: "Saved",
+    cancelled: "Capture cancelled",
+    failed: WP.fault(code).message,
+    uncertain: "The earlier download result could not be verified",
+    expired: "Screenshot source expired; resumption may no longer work",
+  }[phase];
+}
+function setOperationState(operation, nextPhase, details = {}) {
+  if (typeof operation.captureContext?.incognito !== "boolean") return null;
+  const key = getOperationKey(
+      operation.tabId,
+      operation.captureContext.incognito,
+    ),
+    prior = operationStates.get(key);
+  if (prior && prior.operationId !== operation.operationId && !details.begin)
+    return null;
+  if (prior?.operationId === operation.operationId && prior.phase === "saved")
+    nextPhase = "saved";
+  if (
+    prior?.operationId === operation.operationId &&
+    [
+      "initiating",
+      "saving",
+      "paused",
+      "resumable",
+      "saved",
+      "uncertain",
+      "expired",
+    ].includes(prior.phase) &&
+    nextPhase === "cancelled"
+  )
+    nextPhase = prior.phase;
+  const snapshot = WP.validatePublicStatus({
+    operationId: operation.operationId,
+    tabId: operation.tabId,
+    windowId: operation.windowId,
+    incognito: operation.captureContext.incognito,
+    phase: nextPhase,
+    acceptedFrames: details.acceptedFrames ?? prior?.acceptedFrames ?? 0,
+    attemptedFrames: details.attemptedFrames ?? prior?.attemptedFrames ?? 0,
+    width: details.width ?? prior?.width ?? null,
+    height: details.height ?? prior?.height ?? null,
+    warnings: details.warnings ?? prior?.warnings ?? [],
+    code: details.code ?? (nextPhase === "failed" ? "CAPTURE_FAILED" : null),
+    text: publicText(
+      nextPhase,
+      details.acceptedFrames ?? prior?.acceptedFrames ?? 0,
+      details.code,
+    ),
+    restoration: details.restoration ?? prior?.restoration ?? null,
+  });
+  operation.phase = nextPhase;
+  operationStates.delete(key);
+  operationStates.set(key, snapshot);
+  while (operationStates.size > 20)
+    operationStates.delete(operationStates.keys().next().value);
+  renderActionStatus(snapshot).catch(() => {});
+  return snapshot;
+}
+function getOperationState({ tabId, windowId, incognito }) {
+  const current = operationStates.get(getOperationKey(tabId, incognito));
+  if (current?.windowId === windowId) return { ...current };
+  return WP.validatePublicStatus({
+    operationId: null,
+    tabId,
+    windowId,
+    incognito,
+    phase: "idle",
+    acceptedFrames: 0,
+    attemptedFrames: 0,
+    width: null,
+    height: null,
+    warnings: [],
+    code: null,
+    text: "Ready to capture",
+    restoration: null,
+  });
+}
+function renderActionStatus(snapshot) {
+  const action = chrome.action;
+  if (!action?.setBadgeText || !action?.setTitle) return Promise.resolve();
+  const key = getOperationKey(snapshot.tabId, snapshot.incognito),
+    previous = actionUpdates.get(key) || Promise.resolve();
+  const update = previous
+    .catch(() => {})
+    .then(async () => {
+      if (operationStates.get(key) !== snapshot) return;
+      const badge = {
+        preparing: "PREP",
+        capturing: "CAP",
+        encoding: "PNG",
+        initiating: "SAVE",
+        saving: "SAVE",
+        paused: "SAVE",
+        resumable: "SAVE",
+        saved: "DONE",
+        failed: "ERR",
+        cancelled: "",
+        idle: "",
+        uncertain: "?",
+        expired: "?",
+      }[snapshot.phase];
+      await action.setBadgeText({ tabId: snapshot.tabId, text: badge });
+      if (operationStates.get(key) === snapshot)
+        await action.setTitle({ tabId: snapshot.tabId, title: snapshot.text });
+    });
+  actionUpdates.set(key, update);
+  update
+    .finally(() => {
+      if (actionUpdates.get(key) === update) actionUpdates.delete(key);
+    })
+    .catch(() => {});
+  return update;
+}
+function validateExtensionSender(sender, { kind }) {
+  return (
+    sender?.id === chrome.runtime.id &&
+    !sender.tab &&
+    sender.url ===
+      chrome.runtime.getURL(kind === "popup" ? "popup.html" : OFFSCREEN_URL)
+  );
+}
+function cancelRequestedOperation({ operationId, tabId, incognito }) {
+  const operation = [...liveOperations].find(
+    (op) =>
+      op.operationId === operationId &&
+      op.tabId === tabId &&
+      op.captureContext?.incognito === incognito,
+  );
+  if (
+    !operation ||
+    !["preparing", "capturing", "encoding"].includes(operation.phase)
+  )
+    throw WP.fault("INVALID_IDENTITY");
+  operation.cancelReason = "USER_CANCELLED";
+  operation.controller.abort();
+  abortOffscreenSession(operation).catch(() => {});
+  const binding = operation.currentContentBinding;
+  binding?.rpc
+    .call("cancel", { reason: "USER_CANCELLED" })
+    .then((summary) => {
+      operation.restoration = WP.validateRestoreSummary(summary);
+      setOperationState(operation, "cancelled", {
+        restoration: operation.restoration,
+      });
+    })
+    .catch(() => {});
+  return setOperationState(operation, "cancelled");
+}
+function projectOwnedStatus(entry, { recover = false } = {}) {
+  const operation = {
+    operationId: entry.operationId,
+    tabId: entry.tabId,
+    windowId: entry.windowId,
+    captureContext: { incognito: entry.incognito },
+  };
+  const key = getOperationKey(entry.tabId, entry.incognito),
+    prior = operationStates.get(key);
+  if (
+    !prior &&
+    !recover &&
+    ![...liveOperations].some((op) => op.operationId === entry.operationId)
+  )
+    return null;
+  if (prior && prior.operationId !== entry.operationId) return prior;
+  let phase =
+    entry.downloadState === "complete"
+      ? "saved"
+      : entry.sourceState === "expired"
+        ? "expired"
+        : entry.downloadState === "interrupted-final"
+          ? "failed"
+          : entry.downloadState === "paused" || entry.paused
+            ? "paused"
+            : entry.downloadState === "interrupted-resumable"
+              ? "resumable"
+              : entry.downloadState === "in_progress"
+                ? "saving"
+                : "uncertain";
+  return setOperationState(operation, phase, {
+    width: entry.width ?? null,
+    height: entry.height ?? null,
+    code:
+      phase === "failed"
+        ? "DOWNLOAD_START_FAILED"
+        : phase === "expired"
+          ? "SOURCE_EXPIRED"
+          : null,
+  });
+}
+async function recoverOperationStatus(identity) {
+  const current = getOperationState(identity);
+  if (current.operationId) return current;
+  let entries;
+  try {
+    entries = await listOutputs();
+  } catch {
+    return {
+      ...current,
+      text: "Ready to capture. Earlier results may be unavailable after restart.",
+    };
+  }
+  const matches = entries
+    .filter(
+      (entry) =>
+        entry.tabId === identity.tabId &&
+        entry.windowId === identity.windowId &&
+        entry.incognito === identity.incognito,
+    )
+    .sort((a, b) => b.createdAt - a.createdAt);
+  if (
+    matches.length &&
+    (matches.length === 1 || matches[0].createdAt > matches[1].createdAt)
+  )
+    return projectOwnedStatus(matches[0], { recover: true });
+  return {
+    ...current,
+    text: "Ready to capture. Earlier results may be unavailable after restart.",
+  };
+}
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.target === "cfp-worker") {
-    const trusted =
-      browserTarget === "chrome" &&
-      sender?.id === chrome.runtime.id &&
-      !sender.tab &&
-      sender.url === chrome.runtime.getURL(OFFSCREEN_URL);
-    if (!trusted) return;
+  const target = Object.getOwnPropertyDescriptor(
+    message || {},
+    "target",
+  )?.value;
+  if (target === "cfp-worker") {
+    if (
+      browserTarget !== "chrome" ||
+      !validateExtensionSender(sender, { kind: "offscreen" })
+    )
+      return;
     handleCompositorNotification(message, null)
       .then(sendResponse)
       .catch(() => {});
     return true;
   }
-
-  if (message?.type !== "capture-active-tab") return;
-
-  chrome.tabs
-    .query({ active: true, currentWindow: true })
-    .then(async ([tab]) => {
-      if (
-        !Number.isSafeInteger(tab?.id) ||
-        tab.id < 0 ||
-        tab.windowId == null
-      ) {
-        sendResponse({
-          ok: false,
-          error: "No active tab is available to capture.",
-        });
-        return;
-      }
-
-      const initialized = startCapture(tab);
-      if (!initialized) {
-        sendResponse({ ok: false, error: "A capture is already running." });
-        return;
-      }
-
-      try {
-        await initialized;
-        sendResponse({ ok: true });
-      } catch (error) {
-        sendResponse({
-          ok: false,
-          error: error?.message || "Could not initialize the capture.",
-        });
-      }
-    })
-    .catch((error) => {
-      sendResponse({
-        ok: false,
-        error: error?.message || "Could not start the capture.",
-      });
+  const type = Object.getOwnPropertyDescriptor(message || {}, "type")?.value;
+  if (
+    !["capture-active-tab", "capture-status", "capture-cancel"].includes(type)
+  )
+    return;
+  if (!validateExtensionSender(sender, { kind: "popup" })) {
+    sendResponse({ type, ok: false, ...WP.errorResult("INVALID_SENDER") });
+    return;
+  }
+  let request;
+  try {
+    request = WP.validatePopupRequest(message);
+  } catch (error) {
+    sendResponse({ type, ok: false, ...WP.errorResult(error.code) });
+    return;
+  }
+  (async () => {
+    const [queried] = await chrome.tabs.query({
+      active: true,
+      windowId: request.windowId,
     });
-
+    if (!Number.isSafeInteger(queried?.id))
+      throw WP.fault("CAPTURE_CONTEXT_UNVERIFIED");
+    const tab = await chrome.tabs.get(queried.id);
+    if (
+      tab.id !== queried.id ||
+      tab.windowId !== request.windowId ||
+      !tab.active ||
+      typeof tab.incognito !== "boolean"
+    )
+      throw WP.fault("CAPTURE_CONTEXT_UNVERIFIED");
+    let status;
+    if (type === "capture-active-tab") {
+      const handle = startCapture(tab);
+      if (!handle) throw WP.fault("SESSION_BUSY");
+      await handle.initialized;
+      status = getOperationState({
+        tabId: tab.id,
+        windowId: tab.windowId,
+        incognito: tab.incognito,
+      });
+    } else if (type === "capture-cancel") {
+      if (request.tabId !== tab.id) throw WP.fault("INVALID_IDENTITY");
+      status = cancelRequestedOperation({
+        operationId: request.operationId,
+        tabId: tab.id,
+        incognito: tab.incognito,
+      });
+    } else
+      status = await recoverOperationStatus({
+        tabId: tab.id,
+        windowId: tab.windowId,
+        incognito: tab.incognito,
+      });
+    sendResponse({ type, requestId: request.requestId, ok: true, status });
+  })().catch((error) =>
+    sendResponse({
+      type,
+      requestId: request.requestId,
+      ...WP.errorResult(error.code),
+    }),
+  );
   return true;
 });
 
@@ -518,6 +783,7 @@ function startCapture(tab) {
     resolveInitialized,
     rejectInitialized,
     run: null,
+    operationId: crypto.randomUUID(),
   };
 
   activeCapture = capture;
@@ -534,20 +800,21 @@ function startCapture(tab) {
         capture.initialized = true;
         capture.rejectInitialized(error);
       }
-      console.error("Capture Full Page failed:", error);
+      // Typed status is retained for reopening the popup.
     })
     .finally(() => {
       if (activeCapture === capture) activeCapture = null;
       closeOffscreenIfIdle().catch(() => {});
     });
 
-  return initialized;
+  initialized.catch(() => {});
+  return { operationId: capture.operationId, initialized, done: capture.run };
 }
 
 async function captureFullPage(tab, markInitialized, capture = null) {
   const sessionId = crypto.randomUUID();
   const scope = {
-    operationId: crypto.randomUUID(),
+    operationId: capture?.operationId || crypto.randomUUID(),
     sessionId,
     owner: compositorOwner,
     tabId: tab.id,
@@ -578,19 +845,24 @@ async function captureFullPage(tab, markInitialized, capture = null) {
   try {
     const actualTab = await chrome.tabs.get(tabId);
     checkOperation(scope);
-    if (typeof actualTab?.incognito !== "boolean")
-      throw WP.fault("CAPTURE_CONTEXT_UNVERIFIED");
     if (
-      actualTab.incognito &&
-      !WP.getQualifiedCapabilities(browserTarget).privateCapture
+      actualTab?.id !== tabId ||
+      actualTab.windowId !== windowId ||
+      typeof actualTab?.incognito !== "boolean"
     )
-      throw WP.fault("PRIVATE_CAPTURE_UNVERIFIED");
+      throw WP.fault("CAPTURE_CONTEXT_UNVERIFIED");
     scope.captureContext = Object.freeze({
       targetBrowser: browserTarget,
       tabId,
       windowId,
       incognito: actualTab.incognito,
     });
+    setOperationState(scope, "preparing", { begin: true });
+    if (
+      actualTab.incognito &&
+      !WP.getQualifiedCapabilities(browserTarget).privateCapture
+    )
+      throw WP.fault("PRIVATE_CAPTURE_UNVERIFIED");
     const admission = await recoveryReady();
     checkOperation(scope);
     if (
@@ -664,6 +936,7 @@ async function captureFullPage(tab, markInitialized, capture = null) {
       },
     });
     throwIfOffscreenError(start);
+    setOperationState(scope, "capturing", { warnings: prep.warnings });
     markInitialized();
     let frameCount = 0,
       previousAcceptedSpec = null,
@@ -684,6 +957,11 @@ async function captureFullPage(tab, markInitialized, capture = null) {
           if (preCheck.retryable && acquisition < 2) continue;
           throw WP.fault(preCheck.code, "Pre-capture snapshot rejected.");
         }
+        setOperationState(scope, "capturing", {
+          attemptedFrames:
+            (getOperationState({ ...scope.captureContext }).attemptedFrames ||
+              0) + 1,
+        });
         const dataUrl = await captureVisible(
           tabId,
           windowId,
@@ -733,6 +1011,16 @@ async function captureFullPage(tab, markInitialized, capture = null) {
       )
         throw WP.fault("INVALID_GEOMETRY");
       frameCount++;
+      setOperationState(scope, "capturing", {
+        acceptedFrames: frameCount,
+        width: Math.floor(
+          (prep.targetWidth * result.bitmapWidth) / prep.windowWidth,
+        ),
+        height: Math.floor(
+          (prep.targetHeight * result.bitmapHeight) / prep.windowHeight,
+        ),
+        warnings: acquired.postSnapshot.warnings,
+      });
       const accepted = await rpc.call("accept-frame", {
         spec,
         bitmapWidth: result.bitmapWidth,
@@ -751,15 +1039,21 @@ async function captureFullPage(tab, markInitialized, capture = null) {
     // The page no longer needs to remain expanded/scrolled once every viewport
     // has been captured. Restore it before the potentially expensive PNG encode.
     try {
-      await rpc.call("restore", { reason: "success" });
+      scope.restoration = WP.validateRestoreSummary(
+        await rpc.call("restore", { reason: "success" }),
+      );
       prepared = false;
     } catch (error) {
-      console.warn(
-        "Capture Full Page could not restore the page early:",
-        error,
-      );
+      scope.restoration = {
+        status: "unverified",
+        restoredCount: 0,
+        preservedPageChanges: 0,
+        failedCount: 0,
+        codes: ["PORT_DISCONNECTED"],
+      };
     }
 
+    setOperationState(scope, "encoding", { restoration: scope.restoration });
     const intentId = crypto.randomUUID();
     const finished = await callCompositor(scope, "finish", { intentId });
     throwIfOffscreenError(finished);
@@ -789,11 +1083,37 @@ async function captureFullPage(tab, markInitialized, capture = null) {
         }),
       ),
     );
+  } catch (error) {
+    setOperationState(
+      scope,
+      scope.cancelReason === "USER_CANCELLED" ? "cancelled" : "failed",
+      { code: error.code || "CAPTURE_FAILED" },
+    );
+    throw error;
   } finally {
     if (prepared && rpc) {
-      await rpc.call("restore", { reason: "failure" }).catch(() => {});
+      try {
+        scope.restoration = WP.validateRestoreSummary(
+          await rpc.call("restore", {
+            reason:
+              scope.cancelReason === "USER_CANCELLED" ? "cancel" : "failure",
+          }),
+        );
+      } catch {
+        scope.restoration = {
+          status: "unverified",
+          restoredCount: 0,
+          preservedPageChanges: 0,
+          failedCount: 0,
+          codes: ["PORT_DISCONNECTED"],
+        };
+      }
     }
 
+    if (scope.restoration)
+      setOperationState(scope, scope.phase || "failed", {
+        restoration: scope.restoration,
+      });
     closeContentBinding(scope, binding);
 
     if (offscreenStarted && !finishedUrl) {
@@ -1067,8 +1387,9 @@ async function callCompositor(scope, type, payload = {}, timeoutMs = null) {
         }),
     ...payload,
   };
-  WP.validateCompositorRequest(message);
+  const validateResponse = WP.makeCompositorResponseValidator(message);
   let timer,
+    onAbort,
     producer,
     producerPending = false;
   try {
@@ -1087,8 +1408,20 @@ async function callCompositor(scope, type, payload = {}, timeoutMs = null) {
         .finally(() => pendingWorkerPixelProducers.delete(producer))
         .catch(() => {});
     }
+    const cancellation =
+      liveScopes.has(scope) && ["start", "frame", "finish"].includes(type)
+        ? new Promise((_, reject) => {
+            onAbort = () =>
+              reject(WP.fault(scope.cancelReason || "USER_CANCELLED"));
+            scope.controller.signal.addEventListener("abort", onAbort, {
+              once: true,
+            });
+            if (scope.controller.signal.aborted) onAbort();
+          })
+        : new Promise(() => {});
     const result = await Promise.race([
       operation,
+      cancellation,
       new Promise((_, reject) => {
         timer = setTimeout(
           () => reject(WP.fault("TRANSPORT_FAILED")),
@@ -1102,7 +1435,7 @@ async function callCompositor(scope, type, payload = {}, timeoutMs = null) {
         );
       }),
     ]);
-    WP.validateCompositorResponse(message, result);
+    validateResponse(result);
     if (context)
       compositorContext = {
         contextId: result.contextId,
@@ -1111,6 +1444,7 @@ async function callCompositor(scope, type, payload = {}, timeoutMs = null) {
     return result;
   } finally {
     clearTimeout(timer);
+    if (onAbort) scope.controller.signal.removeEventListener("abort", onAbort);
     if (producer && !producerPending)
       pendingWorkerPixelProducers.delete(producer);
     if (type === "frame") {
@@ -1121,33 +1455,40 @@ async function callCompositor(scope, type, payload = {}, timeoutMs = null) {
 }
 
 async function ensureOffscreen() {
-  // Firefox MV3 runs offscreen.js in its background document, where the
-  // compositor is directly callable. Chromium uses a separate offscreen page.
   if (hasSharedCompositor()) return;
-
-  if (!chrome.offscreen?.createDocument || !chrome.runtime.getContexts) {
-    throw new Error(
-      "This browser does not provide a supported capture compositor.",
-    );
-  }
-
-  const documentUrl = chrome.runtime.getURL(OFFSCREEN_URL);
-  const contexts = await chrome.runtime.getContexts({
-    contextTypes: ["OFFSCREEN_DOCUMENT"],
-    documentUrls: [documentUrl],
-  });
-  if (contexts.length) return;
-
-  if (!offscreenCreation) {
-    offscreenCreation = chrome.offscreen
-      .createDocument({
-        url: OFFSCREEN_URL,
-        reasons: ["BLOBS"],
-        justification: "Assemble captured viewport tiles and encode a PNG.",
-      })
-      .finally(() => {
-        offscreenCreation = null;
+  const closing = offscreenClosing;
+  if (closing) await closing.catch(() => {});
+  const creating = offscreenCreation;
+  if (creating) await creating;
+  const documentUrl = chrome.runtime.getURL(OFFSCREEN_URL),
+    query = () =>
+      chrome.runtime.getContexts({
+        contextTypes: ["OFFSCREEN_DOCUMENT"],
+        documentUrls: [documentUrl],
       });
+  if ((await query()).length) return;
+  if (!offscreenCreation) {
+    const create = async () => {
+      for (let attempt = 0; attempt < 2; attempt++)
+        try {
+          await chrome.offscreen.createDocument({
+            url: OFFSCREEN_URL,
+            reasons: ["BLOBS"],
+            justification: "Assemble captured viewport tiles and encode a PNG.",
+          });
+          return;
+        } catch (error) {
+          if ((await query()).length) return;
+          if (attempt === 1) throw error;
+        }
+    };
+    const promise = create();
+    offscreenCreation = promise;
+    promise
+      .finally(() => {
+        if (offscreenCreation === promise) offscreenCreation = null;
+      })
+      .catch(() => {});
   }
   await offscreenCreation;
 }
@@ -1158,29 +1499,51 @@ async function abortOffscreenSession(scope) {
   });
 }
 
-async function closeOffscreenIfIdle() {
-  // Firefox's compositor lives in the background document itself; there is no
-  // separate document to close.
-  if (hasSharedCompositor()) return;
-  if (activeCapture || offscreenCreation || !chrome.offscreen?.closeDocument)
-    return;
-
-  const documentUrl = chrome.runtime.getURL(OFFSCREEN_URL);
-  const contexts = await chrome.runtime.getContexts({
-    contextTypes: ["OFFSCREEN_DOCUMENT"],
-    documentUrls: [documentUrl],
-  });
-  if (!contexts.length || activeCapture) return;
-
-  let status;
-  try {
-    status = await callCompositor(contextScope, "status");
-  } catch {
-    return;
-  }
-
-  if (!status?.idle || activeCapture) return;
-  await chrome.offscreen.closeDocument().catch(() => {});
+function closeOffscreenIfIdle() {
+  if (
+    hasSharedCompositor() ||
+    activeCapture ||
+    pendingWorkerPixelProducers.size ||
+    offscreenCreation ||
+    offscreenClosing ||
+    !chrome.offscreen?.closeDocument
+  )
+    return Promise.resolve();
+  // Install the complete closing promise before the first asynchronous query.
+  const run = async () => {
+    const contexts = await chrome.runtime.getContexts({
+      contextTypes: ["OFFSCREEN_DOCUMENT"],
+      documentUrls: [chrome.runtime.getURL(OFFSCREEN_URL)],
+    });
+    if (!contexts.length || activeCapture || offscreenCreation) return;
+    const first = await callCompositor(contextScope, "status");
+    if (
+      !first.idle ||
+      activeCapture ||
+      offscreenCreation ||
+      pendingWorkerPixelProducers.size
+    )
+      return;
+    const fresh = await callCompositor(contextScope, "status");
+    if (
+      !fresh.idle ||
+      fresh.contextId !== first.contextId ||
+      fresh.lifecycleGeneration !== first.lifecycleGeneration ||
+      activeCapture ||
+      offscreenCreation ||
+      pendingWorkerPixelProducers.size
+    )
+      return;
+    await chrome.offscreen.closeDocument();
+  };
+  const promise = Promise.resolve().then(run);
+  offscreenClosing = promise;
+  promise
+    .finally(() => {
+      if (offscreenClosing === promise) offscreenClosing = null;
+    })
+    .catch(() => {});
+  return promise;
 }
 
 function throwIfOffscreenError(result) {

@@ -352,10 +352,11 @@ test("content position and snapshot dispatch bind document identity", async () =
   send(4, "snapshot", { spec });
   await new Promise((r) => setImmediate(r));
   assert.equal(port.responses[3].result.logicalY, 25);
-  send(5, "restore");
+  send(5, "restore", { reason: "success" });
   await new Promise((r) => setImmediate(r));
   assert.equal(port.responses[4].result.status, "acknowledged");
-  assert.equal(h.root.scrollTop, 23);
+  assert.equal(h.root.scrollTop, 25);
+  assert.equal(port.responses[4].result.preservedPageChanges, 1);
 });
 test("owned inline restoration preserves subsequent page writes", () => {
   const h = content(),

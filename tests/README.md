@@ -156,3 +156,23 @@ behavior or background replacement. Historical optional-browser statements above
 are not qualification evidence for this draft. Real Q1/Q3/Q4-normal/Q5/Q6 and the
 separate Q7a toolchain gates remain unrun. Do not merge, tag, install, activate or
 release this branch from synthetic tests.
+
+## Coordinated geometry, resources and status candidate
+
+The dependency-free suite also checks descriptor-first protocol access, element-local
+animation enumeration and returned-sequence accounting, composed mapping identity,
+whole-subtree suppression footprints, entry-time scroll ownership, encoder failure
+cleanup, stale popup replies and exact operation-bound cancellation. Source-pixel
+oracles run the real dispatcher/compositor/encoder with controlled bitmap/canvas
+primitives and independently decode every output pixel, including fractional scales,
+nonzero source crops, multiple tiles and zero-novel rows. These controlled primitives
+are not browser memory or installed-extension qualification.
+
+`node tests/browser-geometry.cjs` uses the same disposable synthetic browser harness
+as the optional PNG checks. It independently decodes native screenshot output for a
+layout-viewport fixed header, a transformed containing-block fixed descendant and a
+wide sticky header. It checks lower-marker document coordinates and hides the wide
+header only after its natural horizontal fragments are accepted. Supply the same
+Playwright/pngjs/executable variables and task-owned `CFP_QA_OUTPUT` directory.
+It evaluates source without installing an extension; it does not test native
+captureVisibleTab, downloads, user grants, real worker replacement or Firefox.

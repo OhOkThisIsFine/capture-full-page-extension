@@ -305,6 +305,7 @@ function compositor(options = {}) {
   };
 }
 function content() {
+  const clock = { wall: 0, mono: 0 };
   const waits = [],
     root = {
       scrollLeft: 17,
@@ -317,6 +318,13 @@ function content() {
   const runtime = { id: "synthetic-extension", onConnect: event() };
   const c = vm.createContext({
     crypto: { randomUUID },
+    TextEncoder,
+    Date: class extends Date {
+      static now() {
+        return clock.wall;
+      }
+    },
+    performance: { now: () => clock.mono },
     getComputedStyle: () => ({
       boxSizing: "content-box",
       direction: "ltr",
@@ -331,10 +339,65 @@ function content() {
     setTimeout,
     clearTimeout,
   });
+  root.ownerDocument = c.document;
+  root.nodeType = 1;
+  root.getRootNode = () => c.document;
+  const inline = new Map();
+  root.style = {
+    getPropertyValue: (key) => inline.get(key)?.[0] || "",
+    getPropertyPriority: (key) => inline.get(key)?.[1] || "",
+    setProperty: (key, value, priority) => inline.set(key, [value, priority]),
+    removeProperty: (key) => inline.delete(key),
+  };
+  const defaults = {
+    boxSizing: "content-box",
+    position: "static",
+    direction: "ltr",
+    writingMode: "horizontal-tb",
+    transform: "none",
+    translate: "none",
+    rotate: "none",
+    scale: "none",
+    perspective: "none",
+    filter: "none",
+    backdropFilter: "none",
+    zoom: "1",
+    contain: "none",
+    contentVisibility: "visible",
+    willChange: "auto",
+    boxShadow: "none",
+    textShadow: "none",
+    outlineStyle: "none",
+    content: "none",
+    opacity: "1",
+    display: "block",
+    visibility: "visible",
+    overflowX: "visible",
+    overflowY: "visible",
+    borderTopLeftRadius: "0px",
+    borderTopRightRadius: "0px",
+    borderBottomLeftRadius: "0px",
+    borderBottomRightRadius: "0px",
+    clip: "auto",
+    clipPath: "none",
+    maskImage: "none",
+    maskBorderSource: "none",
+  };
+  let selectedComputed = c.getComputedStyle;
+  Object.defineProperty(c, "getComputedStyle", {
+    get:
+      () =>
+      (...args) => ({ ...defaults, ...selectedComputed(...args) }),
+    set: (fn) => {
+      selectedComputed = fn;
+    },
+  });
+  c.window.getComputedStyle = (...args) => c.getComputedStyle(...args);
+  c.HTMLElement = c.Element = class {};
   protocol(c);
   let source = fs.readFileSync("content.js", "utf8").replace(
     /\}\)\(\);\s*$/,
-    `globalThis.api={prepare,moveTo,snapshot,acceptFrame,restore,getState:()=>state,setDetector:fn=>detectPrimaryScroller=fn,expandFrames:expandSameOriginIframes,writeOwnedProperty,restoreProperty};
+    `const realAllElements=allElements;globalThis.api={enableGeometry(){allElements=realAllElements;snapshotVisibleElements=globalThis.api.snapshotVisibleElements;suppressViewportAnchoredElements=globalThis.api.suppressViewportAnchoredElements;},allElements,prepare,moveTo,snapshot,acceptFrame,restore,getState:()=>state,setDetector:fn=>detectPrimaryScroller=fn,expandFrames:expandSameOriginIframes,writeOwnedProperty,restoreProperty,classifyLiveEffects,chargeObservedAllocation,releaseObservedAllocation,discoverCaptureRoots,composedAncestors,classifyCaptureAnchor,assertSupportedMapping,freezeMappingSignature,assertMappingUnchanged,registerOwnedScroll,writeOwnedScroll,decideScrollOwnership,measureSuppressionFootprint,snapshotVisibleElements,suppressViewportAnchoredElements};
  allElements=function*(){yield* globalThis.elements;};detectPrimaryScroller=()=>document.scrollingElement;
  installCaptureStyles=()=>[];discoverCaptureRoots=()=>{};
  expandSameOriginIframes=()=>({count:0,blocked:0,restore(){}});
@@ -349,7 +412,7 @@ function content() {
   c.elements = [];
   c.window.top = c.window;
   vm.runInContext(source, c);
-  return { api: c.api, root, waits, c, runtime };
+  return { api: c.api, root, waits, c, runtime, clock };
 }
 function worker(options = {}) {
   const clock = { now: 0 };
@@ -390,7 +453,14 @@ function worker(options = {}) {
           });
       } else if (message.method === "accept-frame")
         result = { acceptedSequence: message.payload.spec.sequence };
-      else result = { acknowledged: true, partial: false, failed: [] };
+      else
+        result = {
+          status: "acknowledged",
+          restoredCount: 1,
+          preservedPageChanges: 0,
+          failedCount: 0,
+          codes: [],
+        };
       queueMicrotask(() =>
         this.onMessage.emit({
           replyTo: message.id,
@@ -507,7 +577,7 @@ function worker(options = {}) {
   protocol(c);
   vm.runInContext(
     fs.readFileSync("service-worker.js", "utf8") +
-      "\nglobalThis.api={captureFullPage,createPortRPC,callCompositor,captureVisible,startCapture,getActive:()=>activeCapture,getBrowserTarget,makeDownloadOptions,makeFilename,invokeDownloadOnce,observeDownloadInitiation,reconcileOwnedDownloads,bindContentPort,closeContentBinding,latchSourceLoss,liveOperations,pendingWorkerPixelProducers};",
+      "\nglobalThis.api={captureFullPage,createPortRPC,callCompositor,captureVisible,startCapture,getActive:()=>activeCapture,getOperationState,setOperationState,cancelRequestedOperation,recoverOperationStatus,validateExtensionSender,renderActionStatus,operationStates,ensureOffscreen,closeOffscreenIfIdle,getBrowserTarget,makeDownloadOptions,makeFilename,invokeDownloadOnce,observeDownloadInitiation,reconcileOwnedDownloads,bindContentPort,closeContentBinding,latchSourceLoss,liveOperations,pendingWorkerPixelProducers};",
     c,
   );
   return {

@@ -41,9 +41,11 @@ function reserveBytes(s, category, backing, bytes) {
         ? P.MAX_SAVED_TILE_BYTES
         : category === "frameBitmap"
           ? P.MAX_FRAME_BITMAP_BYTES
-          : category === "retainedOutput"
-            ? P.MAX_RETAINED_URL_BYTES
-            : P.MAX_ACCOUNTED_BYTES;
+          : category === "compressorValue"
+            ? P.MAX_ENCODED_BYTES
+            : category === "retainedOutput"
+              ? P.MAX_RETAINED_URL_BYTES
+              : P.MAX_ACCOUNTED_BYTES;
   const owned = [...resources.values()]
     .filter((l) => l.owner === s)
     .reduce((n, l) => n + l.bytes, 0);
@@ -66,6 +68,40 @@ function reserveBytes(s, category, backing, bytes) {
   lifecycleGeneration++;
   return lease;
 }
+function observeReturnedAllocation(s, category, backing, bytes) {
+  const total = [...resources.values()].reduce(
+      (sum, lease) => sum + lease.bytes,
+      0,
+    ),
+    existing = resources.get(backing);
+  s.observedNativePeak = Math.max(
+    s.observedNativePeak || 0,
+    total + (existing ? 0 : bytes),
+  );
+  s.observedNativeAllocations = (s.observedNativeAllocations || 0) + 1;
+  try {
+    return reserveBytes(s, category, backing, bytes);
+  } catch (error) {
+    s.excessNativeAllocation = true;
+    throw error;
+  }
+}
+function inspectReturnedBitmap(s, bitmap) {
+  const bytes = 4 * bitmap.width * bitmap.height;
+  if (Number.isSafeInteger(bytes) && bytes > 0) {
+    const total = [...resources.values()].reduce(
+      (sum, lease) => sum + lease.bytes,
+      0,
+    );
+    s.observedNativePeak = Math.max(s.observedNativePeak || 0, total + bytes);
+  }
+  try {
+    return P.cssBitmap(bitmap.width, bitmap.height);
+  } catch (error) {
+    s.excessNativeAllocation = true;
+    throw error;
+  }
+}
 function releaseBytes(lease) {
   if (!lease || resources.get(lease.backing) !== lease) return;
   if (--lease.refs < 0) throw P.fault("RESOURCE_LIMIT");
@@ -84,7 +120,7 @@ async function nativeAwait(s, lease, factory) {
     lease.pending = false;
     s.nativePending.delete(lease);
     lifecycleGeneration++;
-    if (s.cancelled) releaseBytes(lease);
+    // The caller drops its remaining local backing references before release.
   }
 }
 function statusSnapshot() {
@@ -703,12 +739,16 @@ async function addFrame(message) {
     checkSession(s);
     if (!response.ok) throw P.fault("CAPTURE_FAILED");
     const blob = await nativeAwait(s, strings, () => response.blob());
-    blobLease = reserveBytes(s, "inputBlob", blob, blob.size);
-    releaseBytes(strings);
+    blobLease = observeReturnedAllocation(s, "inputBlob", blob, blob.size);
     checkSession(s);
     bitmap = await nativeAwait(s, blobLease, () => createImageBitmap(blob));
-    const bitmapBytes = P.cssBitmap(bitmap.width, bitmap.height);
-    bitmapLease = reserveBytes(s, "frameBitmap", bitmap, bitmapBytes);
+    const bitmapBytes = inspectReturnedBitmap(s, bitmap);
+    bitmapLease = observeReturnedAllocation(
+      s,
+      "frameBitmap",
+      bitmap,
+      bitmapBytes,
+    );
     checkSession(s);
     if (s.ratioX == null) initializeGeometry(s, bitmap);
     else if (
@@ -811,6 +851,7 @@ async function addFrame(message) {
     bitmap?.close();
     releaseBytes(bitmapLease);
     releaseBytes(blobLease);
+    message.dataUrl = null;
     strings.pending = false;
     releaseBytes(strings);
   }
@@ -866,13 +907,28 @@ function drawAcrossTiles(s, bitmap, sx, sy, sw, sh, dx, dy) {
 
     tile.ctx.drawImage(bitmap, sx, sourceY, sw, amount, dx, localY, sw, amount);
 
-    tile.coverage.push({
-      x0: dx,
-      y0: localY,
-      x1: dx + sw,
-      y1: localY + amount,
-    });
-
+    const tail = tile.coverage.at(-1);
+    if (
+      tail &&
+      tail.y0 === localY &&
+      tail.y1 === localY + amount &&
+      tail.x1 === dx
+    )
+      tail.x1 = dx + sw;
+    else {
+      if (
+        (s.coverageRectCount || 0) >= P.MAX_CAPTURE_FRAMES * 3 ||
+        ((s.coverageRectCount || 0) + 1) * 64 > 16 * 1024 * 1024
+      )
+        throw P.fault("RESOURCE_LIMIT");
+      s.coverageRectCount = (s.coverageRectCount || 0) + 1;
+      tile.coverage.push({
+        x0: dx,
+        y0: localY,
+        x1: dx + sw,
+        y1: localY + amount,
+      });
+    }
     y += amount;
   }
 }
@@ -955,7 +1011,7 @@ async function finalizeTile(s, index) {
     const blob = await nativeAwait(s, tile.lease, () =>
       tile.canvas.convertToBlob({ type: "image/png" }),
     );
-    blobLease = reserveBytes(s, "savedTile", blob, blob.size);
+    blobLease = observeReturnedAllocation(s, "savedTile", blob, blob.size);
     checkSession(s);
     const saved = {
       blob,
@@ -968,6 +1024,7 @@ async function finalizeTile(s, index) {
     tile.canvas.width = 1;
     tile.canvas.height = 1;
     releaseBytes(tile.lease);
+    s.coverageRectCount -= tile.coverage.length;
     tile.coverage.length = 0;
     s.activeTiles.delete(index);
   } finally {
@@ -1241,8 +1298,13 @@ function makeScanlineSource(s) {
               decoded = await nativeAwait(s, tile.lease, () =>
                 createImageBitmap(tile.blob),
               );
-              const bytes = P.cssBitmap(decoded.width, decoded.height);
-              state.bitmapLease = reserveBytes(s, "tileBitmap", decoded, bytes);
+              const bytes = inspectReturnedBitmap(s, decoded);
+              state.bitmapLease = observeReturnedAllocation(
+                s,
+                "tileBitmap",
+                decoded,
+                bytes,
+              );
               if (state.disposed) throw P.fault("CANCELLED");
               checkSession(s);
               if (decoded.width !== s.widthPx || decoded.height !== tile.height)
@@ -1273,6 +1335,11 @@ function makeScanlineSource(s) {
               state.bitmap = null;
               releaseBytes(state.bitmapLease);
               state.bitmapLease = null;
+              if (s.cancelled && tile) {
+                const retained = tile.lease;
+                tile = null;
+                releaseBytes(retained);
+              }
             }
           }
           const rows = Math.min(16, state.canvas.height - state.row),
@@ -1361,19 +1428,23 @@ async function collectIdatChunks(reader, s, encoding) {
     let valueLease;
     try {
       const result = await nativeAwait(s, staging.lease, () => reader.read());
-      if (encoding.failed) throw encoding.failed;
-      checkSession(s);
-      if (result.done) break;
+      if (result.done) {
+        if (encoding.failed) throw encoding.failed;
+        checkSession(s);
+        break;
+      }
       if (!(result.value instanceof Uint8Array))
         throw P.fault("CAPTURE_FAILED");
       const value = result.value;
-      valueLease = reserveBytes(
+      valueLease = observeReturnedAllocation(
         s,
         "compressorValue",
         value.buffer,
         value.buffer.byteLength,
       );
       encoding.leases.add(valueLease);
+      if (encoding.failed) throw encoding.failed;
+      checkSession(s);
       for (let cursor = 0; cursor < value.length; ) {
         checkSession(s);
         if (encoding.failed) throw encoding.failed;
@@ -1464,7 +1535,14 @@ async function encodePngFromTiles(s) {
     ]);
     checkSession(s);
     if (encoding.failed) throw encoding.failed;
-    const ihdr = new Uint8Array(13),
+    const ihdrAllocation = allocate(
+      s,
+      "pngHeader",
+      13,
+      () => new Uint8Array(13),
+    );
+    encoding.leases.add(ihdrAllocation.lease);
+    const ihdr = ihdrAllocation.value,
       view = new DataView(ihdr.buffer);
     view.setUint32(0, s.widthPx, false);
     view.setUint32(4, s.heightPx, false);
