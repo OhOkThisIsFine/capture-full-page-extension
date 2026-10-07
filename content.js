@@ -2706,6 +2706,33 @@
   }
 
   const ownedWrites = new WeakMap();
+  let styleMutationEpoch = 0;
+  function mutateOwnedStyle(el, records, mutation) {
+    const epoch = ++styleMutationEpoch;
+    if (records.size > P.DOM_BATCH_SIZE) throw P.fault("RESOURCE_LIMIT");
+    // Pin only values still owned before our synchronous mutation. A native
+    // shorthand write/removal can change several owned longhand values too.
+    for (const [property, record] of records) {
+      if (
+        el.ownerDocument === record.document &&
+        (!record.root || el.getRootNode?.() === record.root) &&
+        el.style.getPropertyValue(property) ===
+          (record.writtenValue ?? record.previousValue) &&
+        el.style.getPropertyPriority(property) ===
+          (record.writtenPriority ?? record.previousPriority)
+      )
+        record.styleMutationEpoch = epoch;
+    }
+    try {
+      mutation();
+    } finally {
+      for (const [property, record] of records)
+        if (record.styleMutationEpoch === epoch) {
+          record.writtenValue = el.style.getPropertyValue(property);
+          record.writtenPriority = el.style.getPropertyPriority(property);
+        }
+    }
+  }
   function writeOwnedProperty(el, property, value, priority = "important") {
     let records = ownedWrites.get(el);
     if (!records) {
@@ -2718,7 +2745,7 @@
       if (state)
         reserveMetadata(
           state,
-          64 +
+          72 +
             new TextEncoder().encode(
               property + previousValue + previousPriority + value + priority,
             ).length,
@@ -2730,9 +2757,21 @@
         previousValue,
         previousPriority,
       });
+    } else {
+      const record = records.get(property);
+      if (
+        record.context !== state ||
+        el.ownerDocument !== record.document ||
+        (record.root && el.getRootNode?.() !== record.root) ||
+        el.style.getPropertyValue(property) !== record.writtenValue ||
+        el.style.getPropertyPriority(property) !== record.writtenPriority
+      )
+        throw P.fault("GEOMETRY_CHANGED");
     }
     const clamps = ownedClampSnapshot();
-    el.style.setProperty(property, value, priority);
+    mutateOwnedStyle(el, records, () =>
+      el.style.setProperty(property, value, priority),
+    );
     for (const scrollRecord of clamps)
       scrollRecord.lastOwned = scrollRecord.read();
     const record = records.get(property);
@@ -2755,13 +2794,15 @@
       code = "PAGE_STYLE_CHANGED";
     else
       try {
-        if (record.previousValue)
-          el.style.setProperty(
-            property,
-            record.previousValue,
-            record.previousPriority || "",
-          );
-        else el.style.removeProperty(property);
+        mutateOwnedStyle(el, records, () => {
+          if (record.previousValue)
+            el.style.setProperty(
+              property,
+              record.previousValue,
+              record.previousPriority || "",
+            );
+          else el.style.removeProperty(property);
+        });
       } catch {
         code = "STYLE_RESTORE_FAILED";
       }

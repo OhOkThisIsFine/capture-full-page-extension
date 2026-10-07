@@ -476,3 +476,70 @@ test("filtered scanline queue retains the canonical fourfold inflight backing al
   await c.request(p, "abort");
   assert.equal(c.api.resources.size, 0);
 });
+test("owned shorthand undo updates still-owned longhands without inventing page edits", async () => {
+  const h = content(),
+    preparing = h.api.prepare();
+  h.waits.shift().resolve();
+  await preparing;
+  const context = h.api.getState(),
+    axes = new Map();
+  h.root.style = {
+    getPropertyValue(name) {
+      if (name === "overflow")
+        return axes.has("x") && axes.has("y")
+          ? axes.get("x").value === axes.get("y").value
+            ? axes.get("x").value
+            : axes.get("x").value + " " + axes.get("y").value
+          : "";
+      return axes.get("y")?.value || "";
+    },
+    getPropertyPriority(name) {
+      return name === "overflow"
+        ? axes.has("x") && axes.has("y")
+          ? axes.get("x").priority
+          : ""
+        : axes.get("y")?.priority || "";
+    },
+    setProperty(name, value, priority = "") {
+      if (name === "overflow") {
+        axes.set("x", { value, priority });
+        axes.set("y", { value, priority });
+      } else axes.set("y", { value, priority });
+    },
+    removeProperty(name) {
+      if (name === "overflow") axes.clear();
+      else axes.delete("y");
+    },
+  };
+  h.api.writeOwnedProperty(h.root, "overflow-y", "visible");
+  context.rollback.push(() =>
+    h.api.restoreProperty(h.root, "overflow-y", "", ""),
+  );
+  h.api.writeOwnedProperty(h.root, "overflow", "visible");
+  context.rollback.push(() =>
+    h.api.restoreProperty(h.root, "overflow", "", ""),
+  );
+  const summary = await h.api.restore(context);
+  assert.equal(axes.size, 0);
+  assert.equal(summary.preservedPageChanges, 0);
+  assert.equal(summary.failedCount, 0);
+  assert.equal(summary.codes.length, 0);
+});
+test("a newer page style cannot be legitimized or overwritten by a repeated owned write", async () => {
+  const h = content(),
+    preparing = h.api.prepare();
+  h.waits.shift().resolve();
+  await preparing;
+  const context = h.api.getState();
+  h.api.writeOwnedProperty(h.root, "height", "900px");
+  context.rollback.push(() => h.api.restoreProperty(h.root, "height", "", ""));
+  h.root.style.setProperty("height", "333px", "important");
+  assert.throws(
+    () => h.api.writeOwnedProperty(h.root, "height", "1000px"),
+    (e) => e.code === "GEOMETRY_CHANGED",
+  );
+  const summary = await h.api.restore(context);
+  assert.equal(h.root.style.getPropertyValue("height"), "333px");
+  assert.equal(summary.preservedPageChanges, 1);
+  assert.ok(summary.codes.includes("PAGE_STYLE_CHANGED"));
+});
