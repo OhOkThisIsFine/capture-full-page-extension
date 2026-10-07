@@ -146,7 +146,7 @@ function statusSnapshot() {
     retainedUrlCount: live.length,
     retainedUrlBytes: live.reduce((n, r) => n + r.wire.byteLength, 0),
     pendingDisposalBytes: leases
-      .filter((l) => l.pending)
+      .filter((l) => l.pending || (l.retainedByFrame && l.owner?.cancelled))
       .reduce((n, l) => n + l.bytes, 0),
     accountedBytes: leases.reduce((n, l) => n + l.bytes, 0),
     ledgerRevision,
@@ -251,6 +251,9 @@ function releaseSource(record, reason) {
     ledgerRevision++;
   }
   trimTombstones();
+  if (reason === "SOURCE_EXPIRED")
+    reconcileNotification([e.intentId], "expiry");
+  if (isIdle()) notifyIdle();
 }
 function scheduleSourceExpiry(record) {
   const e = record.wire;
@@ -731,15 +734,19 @@ async function addFrame(message) {
     {},
     4 * message.dataUrl.length,
   );
-  let blobLease, bitmap, bitmapLease;
+  // Native awaits protect their immediate input. These frame locals remain
+  // reachable across every await, including tile finalization, until finally.
+  strings.retainedByFrame = true;
+  let response, blob, blobLease, bitmap, bitmapLease;
   try {
-    const response = await nativeAwait(s, strings, () =>
+    response = await nativeAwait(s, strings, () =>
       fetch(message.dataUrl, { signal: s.controller.signal }),
     );
     checkSession(s);
     if (!response.ok) throw P.fault("CAPTURE_FAILED");
-    const blob = await nativeAwait(s, strings, () => response.blob());
+    blob = await nativeAwait(s, strings, () => response.blob());
     blobLease = observeReturnedAllocation(s, "inputBlob", blob, blob.size);
+    blobLease.retainedByFrame = true;
     checkSession(s);
     bitmap = await nativeAwait(s, blobLease, () => createImageBitmap(blob));
     const bitmapBytes = inspectReturnedBitmap(s, bitmap);
@@ -749,6 +756,7 @@ async function addFrame(message) {
       bitmap,
       bitmapBytes,
     );
+    bitmapLease.retainedByFrame = true;
     checkSession(s);
     if (s.ratioX == null) initializeGeometry(s, bitmap);
     else if (
@@ -848,12 +856,19 @@ async function addFrame(message) {
       novelRect,
     };
   } finally {
-    bitmap?.close();
-    releaseBytes(bitmapLease);
-    releaseBytes(blobLease);
-    message.dataUrl = null;
-    strings.pending = false;
-    releaseBytes(strings);
+    try {
+      bitmap?.close();
+    } finally {
+      bitmap = null;
+      blob = null;
+      response = null;
+      message.dataUrl = null;
+      for (const lease of [bitmapLease, blobLease, strings]) {
+        if (!lease) continue;
+        lease.retainedByFrame = false;
+        releaseBytes(lease);
+      }
+    }
   }
 }
 
@@ -1223,7 +1238,8 @@ function cleanupSession(sessionId, { completed = false } = {}) {
   s.savedTiles.clear();
   sessions.delete(sessionId);
   for (const lease of [...resources.values()])
-    if (lease.owner === s && !lease.pending) releaseBytes(lease);
+    if (lease.owner === s && !lease.pending && !lease.retainedByFrame)
+      releaseBytes(lease);
 }
 
 function isIdle() {
@@ -1260,7 +1276,7 @@ function makeScanlineSource(s) {
     s,
     "scanlineQueue",
     {},
-    2 * 16 * (s.widthPx * 4 + 1),
+    4 * 16 * (s.widthPx * 4 + 1),
   );
   const dispose = () => {
     if (state.disposed) return;

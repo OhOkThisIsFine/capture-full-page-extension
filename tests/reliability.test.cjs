@@ -260,7 +260,7 @@ test("actual compositor covers short viewport rows across horizontal columns", a
       );
     }
 });
-test("iframe rollback restores styles and internal scroll only for original document", () => {
+test("iframe rollback restores styles and internal scroll only for original document", async () => {
   const h = content();
   class Frame {
     constructor() {
@@ -308,8 +308,11 @@ test("iframe rollback restores styles and internal scroll only for original docu
       const doc = frame.contentDocument,
         root = doc.scrollingElement,
         before = JSON.stringify([...frame.props]);
-      const operation = { rollback: [] },
-        expansion = h.api.expandFrames(null, operation);
+      const preparing = h.api.prepare();
+      h.waits.shift().resolve();
+      await preparing;
+      const operation = h.api.getState(),
+        expansion = await h.api.expandFrames(null, operation);
       assert.equal(
         frame.style.getPropertyValue("width"),
         borderBox ? "320px" : "300px",

@@ -69,8 +69,14 @@ async function fixture({
     return { ...e.computedStyle, opacity: hidden && !e.defeat ? "0" : "1" };
   };
   async function natural() {
-    const pending = h.api.snapshotVisibleElements();
-    if (h.waits.length) h.waits.shift().resolve();
+    let done = false;
+    const pending = h.api
+      .snapshotVisibleElements()
+      .finally(() => (done = true));
+    while (!done) {
+      if (h.waits.length) h.waits.shift().resolve();
+      await new Promise((resolve) => setImmediate(resolve));
+    }
     await pending;
   }
   async function frame({ accept = true } = {}) {
@@ -200,4 +206,38 @@ test("footprint qualification never materializes whole-subtree textContent", asy
   assert.equal(reads, 0);
   assert.equal(f.context.hidden.size, 1);
   await f.h.api.restore();
+});
+test("escaping border-image paint is ineligible and eligibility is rechecked before suppression", async () => {
+  for (const late of [false, true]) {
+    const f = await fixture({ headerHeight: 160 });
+    if (!late)
+      Object.assign(f.header.computedStyle, {
+        borderImageSource: "linear-gradient(red,red)",
+        borderImageOutset: "40px",
+      });
+    await f.natural();
+    await f.frame();
+    if (late)
+      Object.assign(f.header.computedStyle, {
+        borderImageSource: "linear-gradient(red,red)",
+        borderImageOutset: "40px",
+      });
+    await assert.rejects(
+      f.frame(),
+      (e) => e.code === (late ? "GEOMETRY_CHANGED" : "UNSUPPORTED_OCCLUSION"),
+    );
+    assert.equal(f.context.hidden.size, 0);
+    assert.equal(f.context.lastAcceptedSpec.sequence, 0);
+    await f.h.api.restore();
+  }
+  const bounded = await fixture();
+  Object.assign(bounded.header.computedStyle, {
+    borderImageSource: "linear-gradient(red,red)",
+    borderImageOutset: "0px 0 0px 0",
+  });
+  await bounded.natural();
+  await bounded.frame();
+  await bounded.frame();
+  assert.equal(bounded.context.hidden.size, 1);
+  await bounded.h.api.restore();
 });

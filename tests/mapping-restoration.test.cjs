@@ -96,8 +96,8 @@ test("persistent mapping rejects rotation, mask and reparenting despite equal nu
     if (mutation === "mask")
       h.root.computedStyle = { maskImage: "linear-gradient(black, black)" };
     if (mutation === "parent") h.root.parentElement = node(h, null);
-    assert.throws(
-      () => h.api.snapshot(context, spec),
+    await assert.rejects(
+      h.api.snapshot(context, spec),
       (e) => e.code === "GEOMETRY_CHANGED",
     );
     assert.equal(context.lastAcceptedSpec, null);

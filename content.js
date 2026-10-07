@@ -71,7 +71,7 @@
             break;
           case "snapshot":
             P.ownRecord(message.payload, ["spec"]);
-            result = snapshot(owner.context, message.payload.spec);
+            result = await snapshot(owner.context, message.payload.spec);
             break;
           case "accept-frame":
             result = acceptFrame(owner.context, message.payload);
@@ -233,6 +233,17 @@
           : window.scrollY,
       };
 
+      const detection = detectPrimaryScroller();
+      const detected = detection?.then ? await detection : detection;
+      checkOwner(context);
+      if (
+        !isDocumentScroller(detected) &&
+        !P.getQualifiedCapabilities("chrome").preserveVirtualizer
+      ) {
+        const exposure = precheckExpansionExposure(detected, context);
+        if (exposure?.then) await exposure;
+        checkOwner(context);
+      }
       registerOwnedScroll(
         context,
         documentScroller,
@@ -252,7 +263,9 @@
           } else window.scrollTo(left, top);
         },
       );
-      snapshotIframeScroll(context);
+      const frameScrollScan = snapshotIframeScroll(context);
+      if (frameScrollScan?.then) await frameScrollScan;
+      checkOwner(context);
 
       const initialDocumentWidth = Math.max(
         documentScroller.scrollWidth,
@@ -269,7 +282,6 @@
         1,
       );
 
-      const detected = detectPrimaryScroller();
       let scroller = detected;
       let isDocument = isDocumentScroller(scroller);
       let nestedExpansion = null;
@@ -404,10 +416,12 @@
         );
       }
 
-      const iframeExpansion = expandSameOriginIframes(
+      const expansion = expandSameOriginIframes(
         isDocument ? null : scroller,
         context,
       );
+      const iframeExpansion = expansion?.then ? await expansion : expansion;
+      checkOwner(context);
       if (iframeExpansion.count > 0) {
         await settle();
         checkOwner(context);
@@ -448,6 +462,8 @@
       const originalScrollLeft = scroller.scrollLeft;
       const originalScrollTop = scroller.scrollTop;
       const captureStyles = installCaptureStyles(context);
+      if (captureStyles?.then) await captureStyles;
+      checkOwner(context);
 
       Object.assign(context, {
         scroller,
@@ -472,7 +488,9 @@
         frameIndex: 0,
       });
 
-      neutralizeFixedBackgrounds();
+      const backgroundScan = neutralizeFixedBackgrounds();
+      if (backgroundScan?.then) await backgroundScan;
+      checkOwner(context);
 
       assertSupportedMapping(context);
       writeLogicalScroll(context, 0, 0);
@@ -1016,7 +1034,7 @@
       context.observers.push(observer);
     }
   }
-  function snapshot(context, spec) {
+  async function snapshot(context, spec) {
     checkOwner(context);
     P.validateSpec(context.plan, spec);
     assertMappingUnchanged(context);
@@ -1026,7 +1044,7 @@
         "Snapshot does not match commanded frame.",
       );
     assertSupportedMapping(context);
-    suppressViewportAnchoredElements(spec);
+    await suppressViewportAnchoredElements(spec);
     const metrics = liveMetrics(context),
       original = context.signature;
     const keys = [
@@ -1079,14 +1097,16 @@
       throw P.fault("FRAME_NOT_ACCEPTED");
     context.commandedSpec = spec;
     context.provisionalCandidates = new Map();
-    discoverCaptureRoots(context, { remaining: P.MAX_DISCOVERED_ELEMENTS });
+    const roots = discoverCaptureRoots(context, { remaining: 12000 });
+    if (roots?.then) await roots;
+    checkOwner(context);
     writeLogicalScroll(context, spec.logicalX, spec.logicalY);
     await settle();
     checkOwner(context);
     context.currentX = context.scroller.scrollLeft;
     context.currentY = context.scroller.scrollTop;
     assertMappingUnchanged(context);
-    suppressViewportAnchoredElements(spec);
+    await suppressViewportAnchoredElements(spec);
     return snapshot(context, spec);
   }
   function acceptFrame(context, payload) {
@@ -1172,24 +1192,98 @@
       });
     }
     context.provisionalCandidates?.clear();
-    if (novelRect)
-      (context.acceptedRects ||= []).push({
-        x0: novelRect.dx / (bitmapWidth / context.prep.windowWidth),
-        y0: novelRect.dy / (bitmapHeight / context.prep.windowHeight),
-        x1:
-          (novelRect.dx + novelRect.sw) /
-          (bitmapWidth / context.prep.windowWidth),
-        y1:
-          (novelRect.dy + novelRect.sh) /
-          (bitmapHeight / context.prep.windowHeight),
-      });
     return { acceptedSequence: spec.sequence };
   }
   function getViewportMetrics() {
     return measureViewport(state);
   }
 
-  function detectPrimaryScroller() {
+  async function precheckExpansionExposure(target, context) {
+    // Read-only admission: empty spacers do not prove rendered row exposure.
+    assertSupportedMapping({ scroller: target, isDocument: false });
+    const origin = borderRect(target),
+      css = computed(target),
+      paddingRight = parseFloat(cssValue(css, "padding-right")) || 0,
+      paddingBottom = parseFloat(cssValue(css, "padding-bottom")) || 0,
+      requiredX = target.scrollWidth - paddingRight,
+      requiredY = target.scrollHeight - paddingBottom;
+    let right = 0,
+      bottom = 0,
+      leaves = 0;
+    const replaced = new Set([
+      "IMG",
+      "CANVAS",
+      "VIDEO",
+      "IFRAME",
+      "INPUT",
+      "TEXTAREA",
+      "SELECT",
+      "OBJECT",
+      "EMBED",
+      "SVG",
+    ]);
+    for await (const node of batchedElements(
+      target,
+      context,
+      P.MAX_DISCOVERED_ELEMENTS,
+    )) {
+      const style = computed(node);
+      if (
+        cssValue(style, "display") === "none" ||
+        cssValue(style, "visibility") === "hidden"
+      )
+        continue;
+      let text = false,
+        count = 0;
+      for (let child = node.firstChild; child; child = child.nextSibling) {
+        if (++count > P.DOM_BATCH_SIZE)
+          throw P.fault("UNSUPPORTED_TARGET_MAPPING");
+        if (child.nodeType === 3) {
+          if (child.length > 1048576)
+            throw P.fault("UNSUPPORTED_TARGET_MAPPING");
+          if (/\S/.test(child.data || "")) text = true;
+        }
+      }
+      if (!text && !replaced.has(node.tagName)) continue;
+      if (
+        ["absolute", "fixed"].includes(cssValue(style, "position")) ||
+        ["transform", "translate", "rotate", "scale"].some(
+          (name) => cssValue(style, name) !== "none",
+        )
+      )
+        throw P.fault("UNSUPPORTED_TARGET_MAPPING");
+      let rects, lease;
+      try {
+        rects = node.getClientRects();
+        const observed = chargeObservedAllocation(
+          context,
+          32 + 32 * rects.length,
+        );
+        lease = observed.lease;
+        if (!observed.fits || rects.length > P.DOM_BATCH_SIZE)
+          throw P.fault("UNSUPPORTED_TARGET_MAPPING");
+        for (let i = 0; i < rects.length; i++) {
+          const r = rects[i];
+          if (!(r.width > 0 && r.height > 0)) continue;
+          leaves++;
+          right = Math.max(
+            right,
+            r.right - origin.left - target.clientLeft + target.scrollLeft,
+          );
+          bottom = Math.max(
+            bottom,
+            r.bottom - origin.top - target.clientTop + target.scrollTop,
+          );
+        }
+      } finally {
+        rects = null;
+        releaseObservedAllocation(context, lease);
+      }
+    }
+    if (!leaves || right + 0.5 < requiredX || bottom + 0.5 < requiredY)
+      throw P.fault("UNSUPPORTED_TARGET_MAPPING");
+  }
+  async function detectPrimaryScroller() {
     const docScroller = document.scrollingElement || document.documentElement;
     const docScrollable =
       docScroller.scrollHeight > docScroller.clientHeight + 4 ||
@@ -1199,7 +1293,11 @@
     let bestScore = -Infinity;
     const viewportArea = Math.max(1, window.innerWidth * window.innerHeight);
 
-    for (const el of allElements(document.documentElement)) {
+    for await (const el of batchedElements(
+      document.documentElement,
+      state,
+      state.phase === "capturing" ? 12000 : P.MAX_DISCOVERED_ELEMENTS,
+    )) {
       if (!(el instanceof HTMLElement)) continue;
       if (el === document.body || el === document.documentElement) continue;
       if (el.clientWidth < 100 || el.clientHeight < 100) continue;
@@ -1500,10 +1598,12 @@
       releaseObservedAllocation(context, lease);
     }
   }
-  function discoverCaptureRoots(context, budget) {
+  async function discoverCaptureRoots(context, budget) {
+    let batch = 0;
     const visited = new WeakSet(),
       elements = new WeakSet();
-    const visit = (root) => {
+    const visit = async (root) => {
+      checkOwner(context);
       if (!root || visited.has(root)) return;
       visited.add(root);
       if (!context.roots.has(root)) {
@@ -1530,14 +1630,12 @@
           const node = stack.pop();
           held -= 32;
           context.metadataBytes -= 32;
+          checkOwner(context);
+          if (++batch % P.DOM_BATCH_SIZE === 0) await yieldDOM(context);
           if (!node) continue;
+          if (node !== start) push(node.previousElementSibling);
           if (node.nodeType === 11) {
-            for (
-              let child = node.lastElementChild;
-              child;
-              child = child.previousElementSibling
-            )
-              push(child);
+            push(node.lastElementChild);
             continue;
           }
           if (elements.has(node)) continue;
@@ -1554,50 +1652,58 @@
             },
             context,
           );
-          if (node.shadowRoot) visit(node.shadowRoot);
+          if (node.shadowRoot) await visit(node.shadowRoot);
           if (node instanceof HTMLIFrameElement || node.tagName === "IFRAME")
             try {
               const doc = node.contentDocument;
               if (doc) {
                 void doc.location.href;
-                visit(doc);
+                await visit(doc);
               }
             } catch (error) {
-              if (error.code === "RESOURCE_LIMIT") throw error;
+              if (
+                [
+                  "RESOURCE_LIMIT",
+                  "CANCELLED",
+                  "PREPARE_TIMEOUT",
+                  "CAPTURE_TIMEOUT",
+                  "OPERATION_TIMEOUT",
+                ].includes(error.code)
+              )
+                throw error;
             }
-          for (
-            let child = node.lastElementChild;
-            child;
-            child = child.previousElementSibling
-          )
-            push(child);
+          push(node.lastElementChild);
         }
       } finally {
         context.metadataBytes -= held;
         stack.length = 0;
       }
     };
-    visit(document);
+    await visit(document);
   }
   function restoreOwnedStyles(context) {
     for (const node of context.ownedStyles) node.remove();
     context.ownedStyles.length = 0;
   }
-  function installCaptureStyles(context) {
-    discoverCaptureRoots(context, { remaining: P.MAX_DISCOVERED_ELEMENTS });
+  async function installCaptureStyles(context) {
+    await discoverCaptureRoots(context, {
+      remaining: P.MAX_DISCOVERED_ELEMENTS,
+    });
     return context.ownedStyles;
   }
 
   function snapshotIframeScroll(context) {
-    for (const el of allElements(document.documentElement)) {
-      if (!(el instanceof HTMLIFrameElement)) continue;
+    const iterator = allElements(document.documentElement, context);
+    let count = 0;
+    const inspect = (el) => {
+      if (!(el instanceof HTMLIFrameElement)) return;
       try {
         const frameDocument = el.contentDocument;
-        if (!frameDocument) continue;
+        if (!frameDocument) return;
         void frameDocument.location.href;
         const root =
           frameDocument.scrollingElement || frameDocument.documentElement;
-        if (!root) continue;
+        if (!root) return;
         registerOwnedScroll(
           context,
           root,
@@ -1605,12 +1711,44 @@
           () => el.contentDocument === frameDocument,
         );
       } catch (error) {
-        if (error.code === "RESOURCE_LIMIT") throw error;
+        if (
+          [
+            "RESOURCE_LIMIT",
+            "CANCELLED",
+            "PREPARE_TIMEOUT",
+            "CAPTURE_TIMEOUT",
+            "OPERATION_TIMEOUT",
+          ].includes(error.code)
+        )
+          throw error;
       }
-    }
+    };
+    const step = () => {
+      try {
+        for (;;) {
+          checkOwner(context);
+          const next = iterator.next();
+          if (next.done) return;
+          if (++count > P.MAX_DISCOVERED_ELEMENTS)
+            throw P.fault("RESOURCE_LIMIT");
+          inspect(next.value);
+          if (count % P.DOM_BATCH_SIZE === 0)
+            return yieldDOM(context)
+              .then(step)
+              .catch((error) => {
+                iterator.return();
+                throw error;
+              });
+        }
+      } catch (error) {
+        iterator.return();
+        throw error;
+      }
+    };
+    return step();
   }
 
-  function expandSameOriginIframes(scopeScroller, context) {
+  async function expandSameOriginIframes(scopeScroller, context) {
     const saved = [];
     const rollback = () => {
       for (const { el, props } of [...saved].reverse()) {
@@ -1629,7 +1767,11 @@
     let count = 0;
     let blocked = 0;
 
-    for (const el of allElements(document.documentElement)) {
+    for await (const el of batchedElements(
+      document.documentElement,
+      state,
+      state.phase === "capturing" ? 12000 : P.MAX_DISCOVERED_ELEMENTS,
+    )) {
       if (!(el instanceof HTMLIFrameElement)) continue;
       if (scopeScroller && !scopeScroller.contains(el)) continue;
 
@@ -1781,6 +1923,40 @@
     context.discoveredElements.add(node);
     context.discoveredElementCount = (context.discoveredElementCount || 0) + 1;
   }
+  function yieldDOM(context) {
+    checkOwner(context);
+    context.domYields ||= new Set();
+    return new Promise((resolve, reject) => {
+      let timer;
+      const cancel = () => {
+        clearTimeout(timer);
+        context.domYields.delete(cancel);
+        reject(P.fault("CANCELLED"));
+      };
+      context.domYields.add(cancel);
+      timer = setTimeout(() => {
+        context.domYields.delete(cancel);
+        context.domWorkSinceYield = 0;
+        try {
+          checkOwner(context);
+          resolve();
+        } catch (error) {
+          reject(error);
+        }
+      }, 0);
+    });
+  }
+  async function* batchedElements(root, context, limit) {
+    let count = 0;
+    for (const node of allElements(root, context)) {
+      checkOwner(context);
+      if (++count > limit) throw P.fault("RESOURCE_LIMIT");
+      if ((context.domWorkSinceYield || 0) >= P.DOM_BATCH_SIZE)
+        await yieldDOM(context);
+      checkOwner(context);
+      yield node;
+    }
+  }
   function* allElements(root, context = state) {
     const stack = [],
       seen = new WeakSet();
@@ -1806,20 +1982,13 @@
         if (++visited > P.MAX_DISCOVERED_ELEMENTS)
           throw P.fault("RESOURCE_LIMIT");
         discoverElement(context, node);
+        if (context)
+          context.domWorkSinceYield = (context.domWorkSinceYield || 0) + 1;
         yield node;
-        for (
-          let child = node.lastElementChild;
-          child;
-          child = child.previousElementSibling
-        )
-          push(child);
+        if (node !== root) push(node.previousElementSibling);
+        push(node.lastElementChild);
         if (node.shadowRoot?.mode === "open")
-          for (
-            let child = node.shadowRoot.lastElementChild;
-            child;
-            child = child.previousElementSibling
-          )
-            push(child);
+          push(node.shadowRoot.lastElementChild);
       }
     } finally {
       if (context) context.metadataBytes -= temporary;
@@ -1849,7 +2018,8 @@
   function measureSuppressionFootprint(element, context) {
     const bound = borderRect(element);
     let hasDescendants = false,
-      textRects = 0;
+      textRects = 0,
+      inspected = 0;
     if (
       element.ownerDocument !== document ||
       !(bound.width > 0 && bound.height > 0)
@@ -1860,6 +2030,9 @@
         reason: "unqualified-viewport",
       };
     for (const node of allElements(element, context)) {
+      checkOwner(context);
+      if (++inspected > P.DOM_BATCH_SIZE)
+        return { eligible: false, footprint: null, reason: "ink-budget" };
       const css = computed(node),
         rect = borderRect(node);
       if (
@@ -1884,7 +2057,11 @@
           "mask-image",
         ].some((name) => cssValue(css, name) !== "none") ||
         !["1", "normal"].includes(cssValue(css, "zoom")) ||
-        cssValue(css, "outline-style") !== "none"
+        cssValue(css, "outline-style") !== "none" ||
+        (cssValue(css, "border-image-source") !== "none" &&
+          !/^0(?:px)?(?:\s+0(?:px)?){0,3}$/.test(
+            cssValue(css, "border-image-outset"),
+          ))
       )
         return { eligible: false, footprint: null, reason: "unbounded-paint" };
       for (const pseudo of ["::before", "::after", "::marker"]) {
@@ -2034,7 +2211,11 @@
     const viewport = measureViewport(context),
       scroll = readLogicalScroll(context);
     try {
-      for (const element of allElements(document.documentElement)) {
+      for await (const element of batchedElements(
+        document.documentElement,
+        context,
+        context.phase === "capturing" ? 12000 : P.MAX_DISCOVERED_ELEMENTS,
+      )) {
         if (!(element instanceof HTMLElement)) continue;
         const anchor = classifyCaptureAnchor(element, context);
         if (["ordinary", "nonviewport-fixed"].includes(anchor.kind)) continue;
@@ -2098,12 +2279,16 @@
       ),
     };
   }
-  function suppressViewportAnchoredElements(spec) {
+  async function suppressViewportAnchoredElements(spec) {
     const context = state;
     assertMappingUnchanged(context);
     context.occluders ||= new Map();
     let visited = 0;
-    for (const element of allElements(document.documentElement)) {
+    for await (const element of batchedElements(
+      document.documentElement,
+      context,
+      context.phase === "capturing" ? 12000 : P.MAX_DISCOVERED_ELEMENTS,
+    )) {
       if (++visited > P.MAX_DISCOVERED_ELEMENTS)
         throw P.fault("RESOURCE_LIMIT");
       if (!(element instanceof HTMLElement)) continue;
@@ -2289,9 +2474,13 @@
     state.hidden.set(el, { doc, token, previous });
   }
 
-  function neutralizeFixedBackgrounds() {
+  async function neutralizeFixedBackgrounds() {
     let visited = 0;
-    for (const el of allElements(document.documentElement)) {
+    for await (const el of batchedElements(
+      document.documentElement,
+      state,
+      state.phase === "capturing" ? 12000 : P.MAX_DISCOVERED_ELEMENTS,
+    )) {
       if (++visited > 12000) break;
       if (!(el instanceof HTMLElement)) continue;
       const style = getComputedStyle(el);
@@ -2436,6 +2625,8 @@
       );
     old.cancelled = true;
     old.owner.cancelled = true;
+    for (const cancel of old.domYields || []) cancel();
+    old.domYields?.clear();
     // Decide native scroll ownership synchronously before any geometry collapse.
     for (const record of old.scrollRecords || [])
       try {
@@ -2508,7 +2699,6 @@
     old.scrollRecords = [];
     old.tracked = null;
     old.provisionalCandidates?.clear();
-    old.acceptedRects = [];
     old.acceptedPixelRects = [];
     old.occluders?.clear();
     summary.codes.sort();

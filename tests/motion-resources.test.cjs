@@ -83,7 +83,7 @@ test("excessive native effect sequence is observed then dropped without further 
   assert.equal(near.excessObservedAllocation, true);
   assert.ok(near.metadataPeak > 16 * 1024 * 1024);
 });
-test("effect discovery never calls Document or ShadowRoot getAnimations", () => {
+test("effect discovery never calls Document or ShadowRoot getAnimations", async () => {
   const h = content(),
     c = {
       ...context(),
@@ -91,6 +91,11 @@ test("effect discovery never calls Document or ShadowRoot getAnimations", () => 
       ownedStyles: [],
       planId: "synthetic",
     };
+  const preparing = h.api.prepare();
+  h.waits.shift().resolve();
+  await preparing;
+  Object.assign(h.api.getState(), c);
+  const ownedContext = h.api.getState();
   let elementCalls = 0;
   const style = () => ({ setAttribute() {}, remove() {} }),
     doc = h.c.document;
@@ -121,8 +126,8 @@ test("effect discovery never calls Document or ShadowRoot getAnimations", () => 
   doc.documentElement.nodeType = 1;
   doc.documentElement.shadowRoot = shadow;
   doc.documentElement.getAnimations = () => [];
-  h.api.discoverCaptureRoots(c, { remaining: 50000 });
+  await h.api.discoverCaptureRoots(ownedContext, { remaining: 50000 });
   assert.equal(elementCalls, 1);
-  assert.equal(c.rootCount, 2);
-  assert.equal(c.metadataBytes, 512);
+  assert.equal(ownedContext.rootCount, 2);
+  assert.equal(ownedContext.metadataBytes, 512);
 });

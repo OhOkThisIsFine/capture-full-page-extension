@@ -438,8 +438,8 @@ test("direct content position, snapshot and acceptance validate FrameSpec descri
       h.api.moveTo(context, bad),
       (e) => e.code === "INVALID_ENVELOPE",
     );
-    assert.throws(
-      () => h.api.snapshot(context, bad),
+    await assert.rejects(
+      h.api.snapshot(context, bad),
       (e) => e.code === "INVALID_ENVELOPE",
     );
     const rect = P.frameRect(p, first, 200, 180),

@@ -368,6 +368,8 @@ function content() {
     boxShadow: "none",
     textShadow: "none",
     outlineStyle: "none",
+    borderImageSource: "none",
+    borderImageOutset: "0",
     content: "none",
     opacity: "1",
     display: "block",
@@ -397,9 +399,9 @@ function content() {
   protocol(c);
   let source = fs.readFileSync("content.js", "utf8").replace(
     /\}\)\(\);\s*$/,
-    `const realAllElements=allElements;globalThis.api={enableGeometry(){allElements=realAllElements;snapshotVisibleElements=globalThis.api.snapshotVisibleElements;suppressViewportAnchoredElements=globalThis.api.suppressViewportAnchoredElements;},allElements,prepare,moveTo,snapshot,acceptFrame,restore,getState:()=>state,setDetector:fn=>detectPrimaryScroller=fn,expandFrames:expandSameOriginIframes,writeOwnedProperty,restoreProperty,classifyLiveEffects,chargeObservedAllocation,releaseObservedAllocation,discoverCaptureRoots,composedAncestors,classifyCaptureAnchor,assertSupportedMapping,freezeMappingSignature,assertMappingUnchanged,registerOwnedScroll,writeOwnedScroll,decideScrollOwnership,measureSuppressionFootprint,snapshotVisibleElements,suppressViewportAnchoredElements};
+    `const realAllElements=allElements;globalThis.api={enableGeometry(){allElements=realAllElements;snapshotVisibleElements=globalThis.api.snapshotVisibleElements;suppressViewportAnchoredElements=globalThis.api.suppressViewportAnchoredElements;},allElements,prepare,moveTo,snapshot,acceptFrame,restore,getState:()=>state,setDetector:fn=>detectPrimaryScroller=fn,expandFrames:expandSameOriginIframes,writeOwnedProperty,restoreProperty,classifyLiveEffects,chargeObservedAllocation,releaseObservedAllocation,discoverCaptureRoots,composedAncestors,classifyCaptureAnchor,assertSupportedMapping,freezeMappingSignature,assertMappingUnchanged,registerOwnedScroll,writeOwnedScroll,decideScrollOwnership,measureSuppressionFootprint,snapshotVisibleElements,suppressViewportAnchoredElements,batchedElements,yieldDOM,precheckExpansionExposure};
  allElements=function*(){yield* globalThis.elements;};detectPrimaryScroller=()=>document.scrollingElement;
- installCaptureStyles=()=>[];discoverCaptureRoots=()=>{};
+ installCaptureStyles=()=>[];discoverCaptureRoots=()=>{};precheckExpansionExposure=()=>{};
  expandSameOriginIframes=()=>({count:0,blocked:0,restore(){}});
  neutralizeFixedBackgrounds=snapshotVisibleElements=suppressViewportAnchoredElements=()=>{};
  settle=async()=>{await globalThis.wait();};})();`,

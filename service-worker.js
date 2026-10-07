@@ -324,6 +324,7 @@ function reconcileOwnedDownloads() {
       if (reconcilePromise === promise) {
         reconcilePromise = null;
         if (reconcileDirty) reconcileOwnedDownloads().catch(() => {});
+        else closeOffscreenIfIdle().catch(() => {});
       }
     })
     .catch(() => {});
@@ -470,7 +471,7 @@ function setOperationState(operation, nextPhase, details = {}) {
       operation.tabId,
       operation.captureContext.incognito,
     ),
-    prior = operationStates.get(key);
+    prior = details.begin ? null : operationStates.get(key);
   if (prior && prior.operationId !== operation.operationId && !details.begin)
     return null;
   if (prior?.operationId === operation.operationId && prior.phase === "saved")
@@ -649,7 +650,24 @@ function projectOwnedStatus(entry, { recover = false } = {}) {
 }
 async function recoverOperationStatus(identity) {
   const current = getOperationState(identity);
-  if (current.operationId) return current;
+  if (current.operationId) {
+    if (
+      ["initiating", "saving", "paused", "resumable", "uncertain"].includes(
+        current.phase,
+      )
+    )
+      try {
+        const entry = (await listOutputs()).find(
+          (entry) =>
+            entry.operationId === current.operationId &&
+            entry.tabId === identity.tabId &&
+            entry.windowId === identity.windowId &&
+            entry.incognito === identity.incognito,
+        );
+        if (entry) return projectOwnedStatus(entry) || current;
+      } catch {}
+    return current;
+  }
   let entries;
   try {
     entries = await listOutputs();
@@ -659,6 +677,10 @@ async function recoverOperationStatus(identity) {
       text: "Ready to capture. Earlier results may be unavailable after restart.",
     };
   }
+  // Live outputs and bounded terminal tombstones have distinct timestamp fields.
+  // Only a strictly newest observation can recover an operation; ties stay idle.
+  const observedAt = (entry) =>
+    entry.kind === "output" ? entry.createdAt : entry.terminalAt;
   const matches = entries
     .filter(
       (entry) =>
@@ -666,10 +688,10 @@ async function recoverOperationStatus(identity) {
         entry.windowId === identity.windowId &&
         entry.incognito === identity.incognito,
     )
-    .sort((a, b) => b.createdAt - a.createdAt);
+    .sort((a, b) => observedAt(b) - observedAt(a));
   if (
     matches.length &&
-    (matches.length === 1 || matches[0].createdAt > matches[1].createdAt)
+    (matches.length === 1 || observedAt(matches[0]) > observedAt(matches[1]))
   )
     return projectOwnedStatus(matches[0], { recover: true });
   return {
@@ -811,6 +833,56 @@ function startCapture(tab) {
   return { operationId: capture.operationId, initialized, done: capture.run };
 }
 
+const pendingPageInjections = new Set();
+const cleanupGraces = new WeakMap();
+function cleanupBudget(scope) {
+  let deadline = cleanupGraces.get(scope);
+  if (!deadline) {
+    deadline = { wall: Date.now() + 2000, mono: performance.now() + 2000 };
+    cleanupGraces.set(scope, deadline);
+  }
+  return Math.max(
+    0,
+    Math.min(
+      2000,
+      deadline.wall - Date.now(),
+      deadline.mono - performance.now(),
+    ),
+  );
+}
+async function awaitOperation(scope, native, timeoutMs = 15000) {
+  checkOperation(scope);
+  let timer, onAbort;
+  try {
+    const result = await Promise.race([
+      Promise.resolve(native),
+      new Promise((_, reject) => {
+        onAbort = () =>
+          reject(WP.fault(scope.cancelReason || "USER_CANCELLED"));
+        scope.controller.signal.addEventListener("abort", onAbort, {
+          once: true,
+        });
+        if (scope.controller.signal.aborted) onAbort();
+        timer = setTimeout(
+          () => reject(WP.fault("TRANSPORT_FAILED")),
+          Math.max(
+            0,
+            Math.min(
+              timeoutMs,
+              scope.expiresAt - Date.now(),
+              scope.monoDeadline - performance.now(),
+            ),
+          ),
+        );
+      }),
+    ]);
+    checkOperation(scope);
+    return result;
+  } finally {
+    clearTimeout(timer);
+    if (onAbort) scope.controller.signal.removeEventListener("abort", onAbort);
+  }
+}
 async function captureFullPage(tab, markInitialized, capture = null) {
   const sessionId = crypto.randomUUID();
   const scope = {
@@ -843,7 +915,7 @@ async function captureFullPage(tab, markInitialized, capture = null) {
   let binding = null;
 
   try {
-    const actualTab = await chrome.tabs.get(tabId);
+    const actualTab = await awaitOperation(scope, chrome.tabs.get(tabId));
     checkOperation(scope);
     if (
       actualTab?.id !== tabId ||
@@ -863,7 +935,7 @@ async function captureFullPage(tab, markInitialized, capture = null) {
       !WP.getQualifiedCapabilities(browserTarget).privateCapture
     )
       throw WP.fault("PRIVATE_CAPTURE_UNVERIFIED");
-    const admission = await recoveryReady();
+    const admission = await awaitOperation(scope, recoveryReady());
     checkOperation(scope);
     if (
       admission.retainedUrlCount >= WP.MAX_RETAINED_URLS ||
@@ -874,10 +946,20 @@ async function captureFullPage(tab, markInitialized, capture = null) {
       throw WP.fault("RESOURCE_LIMIT");
     await assertOriginalTabActive(scope);
 
-    await chrome.scripting.executeScript({
-      target: { tabId, frameIds: [0] },
-      files: ["capture-protocol.js", "content.js"],
-    });
+    // A cancelled injection can still land; serialize subsequent preparations
+    // behind its actual settlement without keeping the foreground capture locked.
+    await awaitOperation(scope, Promise.allSettled([...pendingPageInjections]));
+    const injection = Promise.resolve(
+      chrome.scripting.executeScript({
+        target: { tabId, frameIds: [0] },
+        files: ["capture-protocol.js", "content.js"],
+      }),
+    );
+    pendingPageInjections.add(injection);
+    injection
+      .finally(() => pendingPageInjections.delete(injection))
+      .catch(() => {});
+    await awaitOperation(scope, injection);
 
     port = chrome.tabs.connect(tabId, { name: `cfp:${sessionId}`, frameId: 0 });
     binding = bindContentPort(scope, port, scope);
@@ -900,7 +982,7 @@ async function captureFullPage(tab, markInitialized, capture = null) {
       throw new Error("Could not measure this page.");
     }
 
-    await ensureOffscreen();
+    await awaitOperation(scope, ensureOffscreen());
     offscreenStarted = true;
     const plan = WP.makeTraversal(prep);
     scope.captureExpiresAt = Math.min(
@@ -1190,12 +1272,24 @@ function createPortRPC(port, scope, operation = null) {
             pending.delete(id);
             reject(new Error(`Capture command "${method}" timed out.`));
           },
-          operation
-            ? Math.min(
-                method === "restore" ? 2000 : RPC_TIMEOUT_MS,
-                Math.max(0, operation.expiresAt - Date.now()),
-              )
-            : RPC_TIMEOUT_MS,
+          ["restore", "cancel"].includes(method)
+            ? operation && !["success", "fallback"].includes(payload?.reason)
+              ? cleanupBudget(operation)
+              : 2000
+            : Math.max(
+                0,
+                Math.min(
+                  method === "prepare"
+                    ? 15000
+                    : method === "position"
+                      ? 5000
+                      : 2000,
+                  operation ? operation.expiresAt - Date.now() : Infinity,
+                  operation
+                    ? operation.monoDeadline - performance.now()
+                    : Infinity,
+                ),
+              ),
         );
 
         pending.set(id, { resolve, reject, timer });
@@ -1230,7 +1324,7 @@ function createPortRPC(port, scope, operation = null) {
 
 async function assertOriginalTabActive(operation) {
   checkOperation(operation);
-  const tab = await chrome.tabs.get(operation.tabId);
+  const tab = await awaitOperation(operation, chrome.tabs.get(operation.tabId));
   checkOperation(operation);
   if (
     !tab ||
@@ -1242,10 +1336,13 @@ async function assertOriginalTabActive(operation) {
     latchSourceLoss(operation, "TAB_CHANGED");
     checkOperation(operation);
   }
-  const [activeTab] = await chrome.tabs.query({
-    active: true,
-    windowId: operation.windowId,
-  });
+  const [activeTab] = await awaitOperation(
+    operation,
+    chrome.tabs.query({
+      active: true,
+      windowId: operation.windowId,
+    }),
+  );
   checkOperation(operation);
   if (!activeTab || activeTab.id !== operation.tabId) {
     latchSourceLoss(operation, "TAB_CHANGED");
@@ -1431,7 +1528,18 @@ async function callCompositor(scope, type, payload = {}, timeoutMs = null) {
                   WP.MAX_ENCODE_MS,
                   Math.max(0, scope.expiresAt - Date.now()),
                 )
-              : 15000),
+              : ["start", "frame"].includes(type)
+                ? Math.max(
+                    0,
+                    Math.min(
+                      60000,
+                      scope.expiresAt - Date.now(),
+                      scope.monoDeadline - performance.now(),
+                    ),
+                  )
+                : type === "abort" && liveScopes.has(scope)
+                  ? cleanupBudget(scope)
+                  : 2000),
         );
       }),
     ]);
@@ -1504,6 +1612,7 @@ function closeOffscreenIfIdle() {
     hasSharedCompositor() ||
     activeCapture ||
     pendingWorkerPixelProducers.size ||
+    reconcilePromise ||
     offscreenCreation ||
     offscreenClosing ||
     !chrome.offscreen?.closeDocument
@@ -1515,13 +1624,20 @@ function closeOffscreenIfIdle() {
       contextTypes: ["OFFSCREEN_DOCUMENT"],
       documentUrls: [chrome.runtime.getURL(OFFSCREEN_URL)],
     });
-    if (!contexts.length || activeCapture || offscreenCreation) return;
+    if (
+      !contexts.length ||
+      activeCapture ||
+      offscreenCreation ||
+      reconcilePromise
+    )
+      return;
     const first = await callCompositor(contextScope, "status");
     if (
       !first.idle ||
       activeCapture ||
       offscreenCreation ||
-      pendingWorkerPixelProducers.size
+      pendingWorkerPixelProducers.size ||
+      reconcilePromise
     )
       return;
     const fresh = await callCompositor(contextScope, "status");
@@ -1531,7 +1647,8 @@ function closeOffscreenIfIdle() {
       fresh.lifecycleGeneration !== first.lifecycleGeneration ||
       activeCapture ||
       offscreenCreation ||
-      pendingWorkerPixelProducers.size
+      pendingWorkerPixelProducers.size ||
+      reconcilePromise
     )
       return;
     await chrome.offscreen.closeDocument();
@@ -1646,7 +1763,7 @@ async function recoverExistingContext() {
 let recoveryPromise = recoverExistingContext();
 recoveryPromise.catch(() => {});
 let recoveryRetry = null;
-async function recoveryReady() {
+async function performRecoveryReady() {
   let ready = await recoveryPromise;
   if (!ready.ok) {
     if (!recoveryRetry) {
@@ -1663,4 +1780,17 @@ async function recoveryReady() {
   }
   await ensureOffscreen();
   return recoverCompositor();
+}
+
+let readinessPromise = null;
+function recoveryReady() {
+  if (readinessPromise) return readinessPromise;
+  const promise = Promise.resolve().then(performRecoveryReady);
+  readinessPromise = promise;
+  promise
+    .finally(() => {
+      if (readinessPromise === promise) readinessPromise = null;
+    })
+    .catch(() => {});
+  return promise;
 }
