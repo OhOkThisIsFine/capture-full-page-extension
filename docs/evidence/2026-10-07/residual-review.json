@@ -1,184 +1,165 @@
 {
-  "sourceCommit": "dad1e654ac2c60959298c25535f34ed262bea794",
-  "finalTestCommit": "0d0073a0430cd0692f44bc85770cd18b227a9281",
+  "sourceCommit": "0da8512bc743807ab3eba27ee1416e670b17cbd9",
+  "reviewBase": "6ac3ad578850cdbf0a0f67d98f215a22f02dd0fd",
   "contractSha256": "06597e66420cd27083925ec6a6d4c26aeed787f6c07d44b3813133fb7f716fa2",
-  "pinnedBase": "ee790c62eb9b8e1d14587d8921dc8184e59aefc8",
-  "shippingBytesIdenticalThroughFinalTestCommit": true,
-  "archiveNewlines": "Existing core.autocrlf=true converts archive text to CRLF; final archive/package bytes match exactly and Git blobs match after newline normalization. No configuration changed.",
-  "shippingSha256": {
+  "sourceArchiveSha256": "491bf46d0599a7eef2bcc76cbaa8eb77cfaa066c8bc06088186eb1a1c48a3e9f",
+  "sourceHashes": {
     "capture-protocol.js": "507bf5fadc465920d9cecd5efbddc945f8a785339bc04f36b19b54c8a4d3a4a8",
-    "content.js": "a45499849c43c4be41742b08a749abb15b4e757aea9aa10a82cabbbdf5568174",
-    "icons/icon128.png": "7db817f9d834d6f98bf3c55b40f36b2c9cf8d8cb1dd3c6098fc357b75c2167d5",
-    "icons/icon16.png": "60a13899e9a108eb0c7e548ff5d02ffa64215e56e2436db8340b8cf597249840",
-    "icons/icon32.png": "61fe8703eb5c2c2cf6ee623b760df0500fdbc2257c361c25ac75a5d46fa2476e",
-    "icons/icon48.png": "c543a0a23373d791bf093f1e20726271b9537a29d9354697faef85076f4adb68",
-    "manifest.json": "44d05d9b15626728dc51071df82eb8d7b579d50b924d126a4bc85d127da82a3e",
-    "offscreen.html": "494a49bce4a22a7f563303101b09ea5cacdf9f7f2a64273d7ef400f8098655d8",
+    "content.js": "c30781516cf3c15a797007c9d04f70e91dbd37a8f060d8b4e5c8310ec91e0199",
     "offscreen.js": "167a4877d48e6af4f10a7d543c747d31f9d266674536e5353436f5c00fb7f9de",
-    "popup.css": "7897650bf95dc806460fb433554625d21a214839fab4b2ad665d4ecab52462ca",
-    "popup.html": "3ab0a3b05dcfddfe2fa5809e0ce314926c951f2e5c31d0cba65fbf274ce31f6d",
+    "service-worker.js": "295a7fb11e322e6b5265e5f244b15b8cf505d824d5e3fd62fd673944e88ea823",
     "popup.js": "e413d00ea93d410107b36ea2154f13052e3f61eef83a656bdc80ffb658d2ce1d",
-    "service-worker.js": "98aebb964d151aab1b0e7b211c67fb6c7ad6f3bd5bd2b373708b583d2e15c735",
+    "manifest.json": "44d05d9b15626728dc51071df82eb8d7b579d50b924d126a4bc85d127da82a3e",
     "manifest.firefox.json": "8557d2d94330b8cd34b7ec67b0690fea5085fb59bfc85e980565f3eeafa7cd96"
   },
   "changes": [
-    "Retain every reachable frame-local string/Blob/bitmap until actual finally settlement; coexist with fresh sessions",
-    "Order ledger recovery by explicit observation time; reject ambiguous ties; refresh terminal expiry status",
-    "Bound foreground setup waits, serialized native effects, owned DOM task yields, per-frame scanning and independent cleanup grace",
-    "Reject escaping border-image paint and preserve-required exposure before writes when preserve is disabled",
-    "Correct scanline queue allowance, remove unaccounted duplicate rectangles, clear fresh-operation status and close late-completion idle compositor",
-    "Track native CSS shorthand/longhand ownership through undo while preserving newer page edits"
+    "Recovery excludes tombstones only when their terminal time is earlier than a later live output creation. Overlapping terminal/live observations and multiple tombstones return explicit uncertain status with null operationId; no invented newest Saved or mixed-clock sorting.",
+    "Every posted non-cleanup page RPC subscribes to the exact operation AbortSignal. Abort settles/rejects that foreground pending entry, clears its phase timer and removes the listener. Disconnect/close/timeout/reply use the same settlement path; late replies cannot revive it.",
+    "Owned cancel acknowledgement remains independently bounded by the original shared two-second cleanup grace before binding close. Acknowledged restoration is retained; timeout/failure remains unverified. Late original replies cannot initiate output or mutate a newer operation.",
+    "Candidate, element, child and text-rectangle footprint work use shared owned DOM task checkpoints. Canonical 256 batch, 50000 discovery/preparation and 12000 frame traversal limits remain. Owned cancel rejects pending yields; temporary text-layout leases and ranges release in actual finally.",
+    "Footprint border geometry is rechecked after yields; mapping and anchor are rechecked before hiding pixels."
   ],
-  "tests": [
+  "passed": [
     {
-      "status": "passed",
       "command": "node --require ../p7-evidence/isolation.cjs --test --test-isolation=none --test-timeout=60000 tests/*.test.cjs",
-      "source": "finalTestCommit working tree",
-      "tests": 122,
-      "passed": 122,
+      "tests": 130,
+      "passed": 130,
       "failed": 0,
       "skipped": 0,
       "cancelled": 0,
       "exitCode": 0,
-      "receipt": "integration-evidence/review-final-complete.log"
+      "receipt": "review-residuals-full-final-v2.log"
     },
     {
-      "status": "passed",
       "command": "node --require ../../p7-evidence/isolation.cjs --test --test-isolation=none --test-timeout=60000 tests/*.test.cjs",
-      "source": "exact Git source archive dad1e65",
-      "tests": 122,
-      "passed": 122,
+      "cwd": "integration-evidence/review-residuals-source (exact Git archive used for packages)",
+      "tests": 130,
+      "passed": 130,
       "failed": 0,
       "skipped": 0,
       "cancelled": 0,
       "exitCode": 0,
-      "receipt": "integration-evidence/review-final-exact-source-tests.log"
+      "receipt": "review-residuals-exact-tests.log"
     },
     {
-      "status": "passed",
-      "command": "node ../../review-final-exact-mutations-v2.cjs",
-      "source": "exact Git source archive; mutation copies only",
-      "controls": [
-        {
-          "id": "style-alias",
-          "file": "content.js",
-          "mutationDiffSha256": "884719c92fff2ee589ee0fc753a993e48a494672a090e7db6a0b6f494e34b010",
-          "mutatedSourceSha256": "38c178edf3defdc702691930d16cc3614181b329f157b44af7615eaf6fe05c55",
-          "exitCode": 1,
-          "error": null,
-          "expectedFailure": "owned shorthand undo",
-          "failingTestIds": [
-            "owned shorthand undo updates still-owned longhands without inventing page edits (2.2701ms)",
-            "failing tests:"
-          ],
-          "detected": true
+      "command": "node ../../residual-exact-mutations.cjs",
+      "cwd": "integration-evidence/review-residuals-source",
+      "exitCode": 0,
+      "controls": {
+        "sourceHashes": {
+          "capture-protocol.js": "507bf5fadc465920d9cecd5efbddc945f8a785339bc04f36b19b54c8a4d3a4a8",
+          "content.js": "c30781516cf3c15a797007c9d04f70e91dbd37a8f060d8b4e5c8310ec91e0199",
+          "offscreen.js": "167a4877d48e6af4f10a7d543c747d31f9d266674536e5353436f5c00fb7f9de",
+          "service-worker.js": "295a7fb11e322e6b5265e5f244b15b8cf505d824d5e3fd62fd673944e88ea823",
+          "tests/dispatcher-harness.cjs": "acc4d7021701d6e8629a2c40e84bad11b21d7582af69779e40e66bc75e28bb05",
+          "tests/review-regressions.test.cjs": "cad42a7c8dc9f33fdb37695341ad3eccf482eb01baa0d0a5a11ccfbad433269a"
         },
-        {
-          "id": "held-inputs",
-          "file": "offscreen.js",
-          "mutationDiffSha256": "26b99dc612783bd828c9dd85e557d63dce758d107d0611dd2e0842180d3c95b0",
-          "mutatedSourceSha256": "7c1933b71c8c71c06b97629533cbedc9d672986812afd3218f1f4a24777c65bd",
-          "exitCode": 1,
-          "error": null,
-          "expectedFailure": "cancel held",
-          "failingTestIds": [
-            "cancel held decode retains all frame-local inputs until resolution with fresh session coexistence (41.719ms)",
-            "cancel held decode retains all frame-local inputs until rejection with fresh session coexistence (4.4997ms)",
-            "cancel held finalize retains all frame-local inputs until resolution with fresh session coexistence (82.8067ms)",
-            "cancel held finalize retains all frame-local inputs until rejection with fresh session coexistence (82.6418ms)",
-            "failing tests:"
-          ],
-          "detected": true
-        },
-        {
-          "id": "tombstone-order",
-          "file": "service-worker.js",
-          "mutationDiffSha256": "d02bdb6c56bc58c6a884a480cb2c667344459852a38bff51a5b3ce3d86ec33bb",
-          "mutatedSourceSha256": "98b401276aa8280063b393d9be1601b085ded9f2e5fb7be8a1074d41f767a272",
-          "exitCode": 1,
-          "error": null,
-          "expectedFailure": "recovery explicitly",
-          "failingTestIds": [
-            "recovery explicitly orders old tombstones and live outputs, keeps timestamp ties ambiguous (65.2602ms)",
-            "failing tests:"
-          ],
-          "detected": true
-        },
-        {
-          "id": "border-escape",
-          "file": "content.js",
-          "mutationDiffSha256": "353a913bdbd29b9dd70dbf8a2dadbee7cb1dc3cf8a3e133635e64c760eb5d7c2",
-          "mutatedSourceSha256": "49ffc1d122db82e508c734b15bcb929c984163a837df528be871bd0f46f82807",
-          "exitCode": 1,
-          "error": null,
-          "expectedFailure": "escaping border-image",
-          "failingTestIds": [
-            "escaping border-image paint is ineligible and eligibility is rechecked before suppression (4.3164ms)",
-            "failing tests:"
-          ],
-          "detected": true
-        },
-        {
-          "id": "expiry-wakeup",
-          "file": "offscreen.js",
-          "mutationDiffSha256": "65012f89605db8494fd53f5e630ac9f35ab19df2bc853da361d3c38a7ae160a0",
-          "mutatedSourceSha256": "5cb97843b6c10618430b5da71ac5b91d112df219c1bd89cc43fe0d1a0471ea68",
-          "exitCode": 1,
-          "error": null,
-          "expectedFailure": "source expiry publishes",
-          "failingTestIds": [
-            "source expiry publishes terminal status without native events in Firefox shared route (43.4715ms)",
-            "failing tests:"
-          ],
-          "detected": true
-        },
-        {
-          "id": "fresh-status",
-          "file": "service-worker.js",
-          "mutationDiffSha256": "0b0ec327622743118dd622144476b1a4aa90a06a9ed74015263a0a404cf92b18",
-          "mutatedSourceSha256": "df0feaa8a0d85b1d1442999e3652d9e8e69032959a4203bba633a195d53734f8",
-          "exitCode": 1,
-          "error": null,
-          "expectedFailure": "new operation resets",
-          "failingTestIds": [
-            "new operation resets previous progress, dimensions, warnings and restoration (3.7161ms)",
-            "failing tests:"
-          ],
-          "detected": true
-        },
-        {
-          "id": "inflight-queue",
-          "file": "offscreen.js",
-          "mutationDiffSha256": "f5d355e46088bc88fd5e798ddf9f52943aefd01751a82e9876f6a3276acd0526",
-          "mutatedSourceSha256": "b5a27e8e88e6c4d8fcb23909e188a10ad2e81708eb8a8b9ff62cf988fbbb6445",
-          "exitCode": 1,
-          "error": null,
-          "expectedFailure": "filtered scanline queue",
-          "failingTestIds": [
-            "filtered scanline queue retains the canonical fourfold inflight backing allowance (2.3839ms)",
-            "failing tests:"
-          ],
-          "detected": true
-        }
-      ],
-      "productionCheckoutUnchanged": true,
-      "exitCode": 0
+        "productionCheckoutUnchanged": true,
+        "command": "node --require ../p7-evidence/isolation.cjs --test --test-isolation=none --test-timeout=3000 --test-name-pattern=recovery keeps newer|cancel held posted|cancel reaches actual tests/review-regressions.test.cjs",
+        "results": [
+          {
+            "id": "mixed-recovery",
+            "file": "service-worker.js",
+            "anchorSha256": "091abef34229a93a6cc8b25fb0dfd1460d50455383494f5f1847223763df477b",
+            "mutatedSourceSha256": "9e3262d89a75def1cfe741e3e58efbde1721579c8fc375224b1caa58ceaefcf4",
+            "exitCode": 1,
+            "expectedFailure": "recovery keeps newer",
+            "failingTests": [
+              "\u2716 recovery keeps newer capture identity despite reversed native completion order (69.9369ms)",
+              "\u2716 failing tests:",
+              "\u2716 recovery keeps newer capture identity despite reversed native completion order (69.9369ms)"
+            ],
+            "detected": true
+          },
+          {
+            "id": "rpc-abort",
+            "file": "service-worker.js",
+            "anchorSha256": "70f0db1598002fc08546486d2e916da0741d3afdb1113a1806656a757526c012",
+            "mutatedSourceSha256": "f48a3744ed7edb20a5f612e539321c27e55b6208f6b19f2c055eb3a66a099cb0",
+            "exitCode": 1,
+            "expectedFailure": "cancel held posted",
+            "failingTests": [
+              "\u2716 cancel held posted prepare clears foreground lock with acknowledged restoration (6.081ms)",
+              "\u2716 cancel held posted prepare clears foreground lock with timed-out restoration (3.1627ms)",
+              "\u2716 cancel held posted position clears foreground lock with acknowledged restoration (3.1273ms)",
+              "\u2716 cancel held posted position clears foreground lock with timed-out restoration (3.4371ms)",
+              "\u2716 failing tests:",
+              "\u2716 cancel held posted prepare clears foreground lock with acknowledged restoration (6.081ms)",
+              "\u2716 cancel held posted prepare clears foreground lock with timed-out restoration (3.1627ms)",
+              "\u2716 cancel held posted position clears foreground lock with acknowledged restoration (3.1273ms)",
+              "\u2716 cancel held posted position clears foreground lock with timed-out restoration (3.4371ms)"
+            ],
+            "detected": true
+          },
+          {
+            "id": "cleanup-ack",
+            "file": "service-worker.js",
+            "anchorSha256": "e47a0e2aa9ef9c2d6ecd99ac835fcf21462ef6af805ba2035b72dfd80209c27d",
+            "mutatedSourceSha256": "08e1774f9b87df4861c5bf942528f474632219d15ae6d7dd610edf1b2aa024d2",
+            "exitCode": 1,
+            "expectedFailure": "cancel held posted",
+            "failingTests": [
+              "\u2716 cancel held posted prepare clears foreground lock with acknowledged restoration (6.7602ms)",
+              "\u2716 cancel held posted prepare clears foreground lock with timed-out restoration (3.2272ms)",
+              "\u2716 cancel held posted position clears foreground lock with acknowledged restoration (3.4458ms)",
+              "\u2716 cancel held posted position clears foreground lock with timed-out restoration (4.7663ms)",
+              "\u2716 failing tests:",
+              "\u2716 cancel held posted prepare clears foreground lock with acknowledged restoration (6.7602ms)",
+              "\u2716 cancel held posted prepare clears foreground lock with timed-out restoration (3.2272ms)",
+              "\u2716 cancel held posted position clears foreground lock with acknowledged restoration (3.4458ms)",
+              "\u2716 cancel held posted position clears foreground lock with timed-out restoration (4.7663ms)"
+            ],
+            "detected": true
+          },
+          {
+            "id": "phase-yields",
+            "file": "content.js",
+            "anchorSha256": "be89e443ed7b2c578da91221c423bac253e490c36ee37e735fbe1bdb218dd219",
+            "mutatedSourceSha256": "1cecaf5a5de8d8f45162250ecbd924540b99a93992315ac1d50fb437944d6f1e",
+            "exitCode": 1,
+            "expectedFailure": "cancel reaches actual",
+            "failingTests": [
+              "\u2716 cancel reaches actual candidates footprint phase within owned DOM task batch (50.4263ms)",
+              "\u2716 cancel reaches actual children footprint phase within owned DOM task batch (4.0794ms)",
+              "\u2716 cancel reaches actual text-rectangles footprint phase within owned DOM task batch (4.3206ms)",
+              "\u2716 failing tests:",
+              "\u2716 cancel reaches actual candidates footprint phase within owned DOM task batch (50.4263ms)",
+              "\u2716 cancel reaches actual children footprint phase within owned DOM task batch (4.0794ms)",
+              "\u2716 cancel reaches actual text-rectangles footprint phase within owned DOM task batch (4.3206ms)"
+            ],
+            "detected": true
+          },
+          {
+            "id": "text-lease",
+            "file": "content.js",
+            "anchorSha256": "9701a292d49a138f959ecd2742ebb0c2426f129e1be7c279a2517b3f60ddf646",
+            "mutatedSourceSha256": "6401b5d44e2fa6db9a0c354d3802de210f3862ade27f98e50787a0cd036a305d",
+            "exitCode": 1,
+            "expectedFailure": "cancel reaches actual text-rectangles",
+            "failingTests": [
+              "\u2716 cancel reaches actual text-rectangles footprint phase within owned DOM task batch (2.9179ms)",
+              "\u2716 failing tests:",
+              "\u2716 cancel reaches actual text-rectangles footprint phase within owned DOM task batch (2.9179ms)"
+            ],
+            "detected": true
+          }
+        ]
+      },
+      "definitions": "mixed-recovery falsely returns Saved on ambiguous observations; rpc-abort omits AbortSignal listener; cleanup-ack skips awaited ownership acknowledgement; phase-yields disables shared owned task yields; text-lease omits text rectangle release"
     },
     {
-      "status": "passed",
       "command": "git ls-files *.js *.cjs; node --check each tracked file",
       "checked": 26,
-      "failed": 0,
+      "failed": [],
       "exitCode": 0
     },
     {
-      "status": "passed",
-      "command": "python ../review-final-build.py",
-      "source": "exact Git archive; fresh destination; every ZIP member/source/extracted byte compared",
+      "command": "python ../review-residuals-build.py",
       "exitCode": 0,
+      "scope": "Development/source-only artifacts, fresh owned destination, every package member compared to exact source/extraction; existing archive CRLF conversion explicit, no configuration changed",
       "packages": {
-        "sourceCommit": "dad1e654ac2c60959298c25535f34ed262bea794",
-        "sourceArchiveSha256": "32889006ac5748b9cff98cb2ec0898056be4c9ac1d867723f0f948ff73f519fb",
+        "sourceCommit": "0da8512bc743807ab3eba27ee1416e670b17cbd9",
+        "sourceArchiveSha256": "491bf46d0599a7eef2bcc76cbaa8eb77cfaa066c8bc06088186eb1a1c48a3e9f",
         "releaseToolchainQualified": false,
         "installedOrSubmitted": false,
         "results": [
@@ -186,8 +167,8 @@
             "target": "chrome",
             "version": "5.3.0",
             "archive": "capture-full-page-chrome-5.3.0.zip",
-            "sha256": "78cef70adce6546ffe0ca5bab1c81c73f40963b2dfb81fe7d586b10a5859b8f3",
-            "bytes": 62327,
+            "sha256": "c08f33e5340af90f3aab2ab92f231d32a312e26b8ce2be24ac8cd9fa621ef1ec",
+            "bytes": 62794,
             "members": [
               "capture-protocol.js",
               "content.js",
@@ -209,8 +190,8 @@
             "target": "firefox",
             "version": "5.3.0",
             "archive": "capture-full-page-firefox-5.3.0.zip",
-            "sha256": "d4d6cf94ef00a7074c47c8be8dd8378b22aac2bea12f72dd16901477e1a35b44",
-            "bytes": 62187,
+            "sha256": "88b400ad77eee05d009f7299d1f7431b4b49b098a9541dc7b00595d591fef5dd",
+            "bytes": 62654,
             "members": [
               "capture-protocol.js",
               "content.js",
@@ -231,29 +212,38 @@
       }
     }
   ],
-  "nativeSourceDiagnostics": {
-    "status": "passed",
-    "browser": "Chrome 154.0.8037.98",
-    "shippingSource": "dad1e654ac2c60959298c25535f34ed262bea794",
-    "scope": "Production source evaluated from exact extracted Chrome package in isolated synthetic profiles. Runtime and screenshots are test harness inputs. No extension loaded or granted activeTab; no native captureVisibleTab/downloads/installed lifecycle qualification.",
-    "commands": [
-      "node --require ./tests/native-source-isolation.cjs tests/browser-restoration.cjs",
-      "node --require ./tests/native-source-isolation.cjs tests/browser-png.cjs",
-      "node --require ./tests/native-source-isolation.cjs tests/browser-geometry.cjs",
-      "node --require ./tests/native-source-isolation.cjs tests/browser-layout.cjs"
+  "nativeSourceOnly": {
+    "sourceCommit": "0da8512bc743807ab3eba27ee1416e670b17cbd9",
+    "browser": "Chrome154.0.8037.98",
+    "scope": "Production source evaluated from exact extracted Chrome package. Synthetic runtime, loopback-only fixtures and CDP screenshots in fresh task-owned profiles; no extension loaded, native captureVisibleTab, grants, downloads or worker/background qualification. Node external network denied, browser external routes aborted, credential-free child environment; only own profile/process closed.",
+    "runs": [
+      {
+        "name": "restoration",
+        "command": "node --require ./tests/native-source-isolation.cjs tests/browser-restoration.cjs",
+        "exitCode": 0,
+        "error": null
+      },
+      {
+        "name": "png",
+        "command": "node --require ./tests/native-source-isolation.cjs tests/browser-png.cjs",
+        "exitCode": 0,
+        "error": null
+      },
+      {
+        "name": "geometry",
+        "command": "node --require ./tests/native-source-isolation.cjs tests/browser-geometry.cjs",
+        "exitCode": 0,
+        "error": null
+      },
+      {
+        "name": "layout",
+        "command": "node --require ./tests/native-source-isolation.cjs tests/browser-layout.cjs",
+        "exitCode": 0,
+        "error": null
+      }
     ],
-    "environment": {
-      "PLAYWRIGHT_MODULE": "existing task-owned playwright-core 1.56.1",
-      "PNGJS_MODULE": "existing task-owned pngjs 7",
-      "CFP_CHROMIUM_EXECUTABLE": "existing signed official Chrome executable",
-      "CFP_EXTENSION_ROOT": "integration-evidence/review-final-packages/verified-chrome",
-      "CFP_SOURCE_COMMIT": "dad1e654ac2c60959298c25535f34ed262bea794",
-      "CFP_QA_OUTPUT": "unique task-owned evidence directory per run",
-      "CFP_QA_REPORT": "unique task-owned layout JSON"
-    },
-    "isolation": "External Node network denied before imports; ephemeral loopback fixtures only; fresh owned browser profiles; credential-free browser environment; external browser routes aborted; no extension-load or unsafe flags; only owned profiles/process closed.",
     "restoration": {
-      "sourceCommit": "dad1e654ac2c60959298c25535f34ed262bea794",
+      "sourceCommit": "0da8512bc743807ab3eba27ee1416e670b17cbd9",
       "scope": "Isolated native Chrome DOM, production function bodies with test-only internal exposure and controlled settle; no packaged extension, activeTab, captureVisibleTab, native download, worker replacement, Firefox or memory qualification",
       "checks": [
         {
@@ -406,7 +396,7 @@
       ],
       "sourceHashes": {
         "capture-protocol.js": "507bf5fadc465920d9cecd5efbddc945f8a785339bc04f36b19b54c8a4d3a4a8",
-        "content.js": "a45499849c43c4be41742b08a749abb15b4e757aea9aa10a82cabbbdf5568174",
+        "content.js": "c30781516cf3c15a797007c9d04f70e91dbd37a8f060d8b4e5c8310ec91e0199",
         "offscreen.js": "167a4877d48e6af4f10a7d543c747d31f9d266674536e5353436f5c00fb7f9de"
       },
       "browser": "154.0.8037.98"
@@ -555,7 +545,7 @@
       "childRealmRotation": "GEOMETRY_CHANGED"
     },
     "layout": {
-      "sourceCommit": "dad1e654ac2c60959298c25535f34ed262bea794",
+      "sourceCommit": "0da8512bc743807ab3eba27ee1416e670b17cbd9",
       "fixtureHashes": {
         "originalShell": "3c60edd8427df5c765d3fa2adef157fc9d90228ba7a88d413f0be2e03f665192",
         "exposedShell": "c2d49891bd72b34ceb111fa2b7e15272965ccf6f342004e5d75c4b5de49cacbe"
@@ -717,77 +707,48 @@
         "styles": 0
       }
     },
-    "exitCodes": [
-      0,
-      0,
-      0,
-      0
-    ],
-    "geometryTestCommit": "66301cabf3ebc691e4fd796707b012200c7075d0"
+    "environment": {
+      "CFP_EXTENSION_ROOT": "integration-evidence/review-residuals-packages/verified-chrome",
+      "CFP_SOURCE_COMMIT": "0da8512bc743807ab3eba27ee1416e670b17cbd9",
+      "CFP_CHROMIUM_EXECUTABLE": "existing signed official Chrome",
+      "PLAYWRIGHT_MODULE": "existing task-owned playwright-core1.56.1",
+      "PNGJS_MODULE": "existing task-owned pngjs7",
+      "CFP_QA_OUTPUT": "unique task-owned run directory",
+      "CFP_QA_REPORT": "unique layout report"
+    }
   },
-  "preservedFailedExperiments": [
-    "Initial fixed-width scroll fixture clamped at 515 because horizontal scrollbar; corrected width to 100%, strict 500/200 assertions retained.",
-    "Initial border-image marker sample at 180 was white; actual ring 190-200, corrected outside-box sample195 with strict RGB unchanged.",
-    "Controlled held-settle cancellation fixture initially cancelled before asynchronous scan reached settle; bounded observed-settle handshake added.",
-    "Native rollback exposed false PAGE_STYLE_CHANGED from own CSS alias mutation; fixed ownership accounting, strengthened native zero-preserved/zero-failed assertions.",
-    "Native geometry initially returned accepted without awaiting newly asynchronous snapshot; awaited it, retained strict GEOMETRY_CHANGED assertion.",
-    "Prior CI root-discovery cancel test assumed host timer ordering; deterministic held first owned yield retains <=256 assertion and adds exact timer cleanup assertion.",
-    "Earlier mutation patch anchor rejected duplicate/mismatched newline; exact source newline-aware literal patching retains all unchanged bytes.",
-    "Earlier expiry-wakeup mutant survived coalesced fake timer timeline; separate precursor settlement before expiry strengthens positive/negative oracle."
+  "failedThenCorrected": [
+    "Focused v1/v2 recovery observation fixture omitted required paused boolean; schema validation rejected native observations. Corrected fixture to exact required schema; Saved/uncertain assertions unchanged.",
+    "Focused v1 direct RPC deadline fixture lacked actual operation AbortController; added real controller to match production scope.",
+    "Focused v3 computed-style wrapper recursively called the harness selected getter; corrected fixture hook, retained all phase cancellation assertions.",
+    "Initial posted-RPC timer assertion inspected function values rather than timer durations; strengthened it to observe actual set/clear IDs and durations before/after AbortSignal.",
+    "Rejected initial insertion-order recovery approach after reviewer clarification: unchanged wire schema does not establish newest-operation authority; explicit uncertainty now tested with actual reversed native completion."
   ],
   "notRun": [
-    {
-      "gate": "Q1/LP1",
-      "reason": "Packaged native captureVisibleTab attribution, real toolbar/context-menu gestures require exact pinned browser and supported GUI control or human reviewer with a local evidence harness"
-    },
-    {
-      "gate": "Q3",
-      "reason": "Actual process-group RSS sampling <=100ms, repeated captures, 30s idle/cancel memory not measured"
-    },
-    {
-      "gate": "Q4 normal",
-      "reason": "Native Chrome/Firefox download manager exactly-one observation and save preference qualification require installed candidate GUI"
-    },
-    {
-      "gate": "Q5",
-      "reason": "Actual native sender/offscreen replacement/background lifecycle not qualified"
-    },
-    {
-      "gate": "Q6",
-      "reason": "Current pinned Chrome/Firefox manual finite qualification table not run"
-    },
-    {
-      "gate": "Q7a",
-      "reason": "Locked release toolchain/install/activation receipts not qualified"
-    },
-    {
-      "gate": "Firefox native",
-      "reason": "Existing signed Firefox147.0.4 differs from canonical157.0.1 pin; exact approved runtime and GUI route not yet established in this executor"
-    },
-    {
-      "gate": "install/merge/deploy/store",
-      "reason": "Parent-coordinated independent review and native gates remain; first bounded turn excludes these actions"
-    }
+    "Q1/LP1 installed native captureVisibleTab attribution/real gestures",
+    "Q3 actual process-group RSS<=100ms, repeated capture/cancel/30s idle",
+    "Q4-normal actual Chrome/Firefox native download manager and save preference paths",
+    "Q5 native sender/offscreen/background replacement",
+    "Q6 current exact pinned manual finite table",
+    "Firefox native capture/downloads/shared lifecycle",
+    "Q7a locked release toolchain/install activation receipts",
+    "Extension install, merge, deployment and store release"
   ],
-  "blocker": "At this checkpoint installed qualification was not run. Missing tests/packaged-browser.cjs and scripts/qa-contract.cjs are concrete harness implementation/evidence gaps. Tool inventory in the selected Windows executor exposes shell/file/terminal APIs but no general desktop GUI click/screenshot API in this turn; this does not establish absence of GUI capability in another workspace or of manual human access. Existing signed Chrome154/Firefox147 differ from canonical pins. Implement the local coordinator and contract validator, provision the exact approved native browser runtime, and use supported GUI control or a human reviewer on isolated task-owned profiles. Do not move product execution to another workspace to evade restrictions.",
+  "nativeRoute": "native-qualification-route.md: missing runner/validator are concrete local implementation gaps; selected executor currently exposes shell/file/terminal APIs but no general desktop GUI click/screenshot API in this turn. This does not prove absence of human access or GUI capability in another workspace. Establish exact approved runtime and supported GUI or human reviewer on isolated task-owned selected-executor profiles. Do not transfer execution to evade restrictions.",
   "publication": {
     "draftPr": "https://github.com/OhOkThisIsFine/capture-full-page-extension/pull/11",
     "draft": true,
-    "merged": false,
     "installed": false,
+    "merged": false,
     "deployed": false,
     "storeSubmitted": false
   },
-  "receiptSha256": {
-    "review-final-complete.log": "91068ee711e3b8c2509d34a030a3425b0591cf2d510532174e95bfbecd891b72",
-    "review-final-exact-source-tests.log": "b5096e434ab4abf731f69b2b89c5a03d1bc694a3d61d2b8aa86fe6dd6b1e40a1",
-    "review-final-packages\\results.json": "545955c395414709cb67613523cd8813eccfacc1e0189f8d594123613906e87f",
-    "review-final-exact-mutations-v2\\results.json": "191d8f5cd0eb455604ccd51564c4adef91e66a637b193ff7742760763030605b",
-    "review-final-native\\restoration\\native-source-results.json": "c75b87f8654ad146cf49f7481ceccc807c4b7de3ba56d909b133c20a41fdc2f5",
-    "review-final-native\\png\\chrome-pixel-report.json": "2f188bf73e5111d9cc665ce523a7eecec873139fdf71c91a38feb2f93f1d521b",
-    "review-final-geometry-v2\\native-geometry-report.json": "05022cb90556c930b27b98da374b7aed6ee4bb6baebe41e73b29baee3584a1ba",
-    "review-final-native\\layout\\report.json": "602457fb0cedaa6904f0894549ea03215fb8a54ebf647bee95bf470f9f998c68"
-  },
-  "historicalCheckpoint": true,
-  "supersededBy": "residual-review.json"
+  "receiptHashes": {
+    "review-residuals-full-final-v2.log": "a133ad2047f001641a2dcaf4ebd1cdb9b5e7682bb0ed05bcb28564f644b825d9",
+    "review-residuals-exact-tests.log": "ac8c33e61e2b67410e28ce8ab6a70ef8b843d6d3c5d77e688158f224ceb063aa",
+    "residual-exact-mutations/results.json": "031cbf365e4ab445eb1e2d096037da8e82ebefec76503831665cc8ef613e1c01",
+    "review-residuals-packages/results.json": "682862a79ab7c696f3dfedbd37cafb0d6d9c585ff4c07c2967b6ee84490dd043",
+    "review-residuals-native/results.json": "adbd7de000d00b54dcfd07b8797e739a3695194cabeccda7885d9c73124ef0df",
+    "residual-syntax.json": "69ecda306ee3b77f93c6038a736edefc98bf5d27d12ca913f0c83d9687cee919"
+  }
 }
