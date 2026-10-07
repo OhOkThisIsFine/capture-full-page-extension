@@ -495,3 +495,150 @@ test("duplicate stable native output rejects independent of purported manual suc
     assert.ok(!F.filenamePattern(f).test(name + "-evil.png"));
     R.checkpointAndClose(t.session, "synthetic duplicate rejection");
   }));
+test("synthetic complete run binds exact report bytes and decoded PNGs after every mandatory gate", async () =>
+  withBrowser(async (t) => {
+    const { qa } = require("./helpers/qa-fixtures.cjs"),
+      evidence = "evidence/synthetic-observation.txt";
+    fs.writeFileSync(
+      path.join(t.session.evidenceDir, evidence),
+      "Synthetic unit fixture only: no actual browser, gesture or qualification.",
+    );
+    const timestamp = new Date().toISOString(),
+      wall = Date.now(),
+      attempts = [];
+    let sequence = 0;
+    for (const f of F.fixtures().filter((f) => f.result === "success")) {
+      sequence++;
+      const gesture =
+        f.id === "iframe-padding"
+          ? "context-menu-iframe"
+          : sequence === 2
+            ? "context-menu-top"
+            : "toolbar";
+      const name = `2026-10-07_00-00-00_127.0.0.1_CFP QA ${f.id}.png`,
+        ratio = 0.125,
+        width = f.width * ratio,
+        height = Math.floor(f.height * ratio);
+      const image = png(width, height, {
+        pixel(x, y) {
+          const gx = x / ratio - f.offsetX,
+            gy = y / ratio - f.offsetY;
+          return gx >= 0 && gy >= 0 && gx < f.gridWidth && gy < f.gridHeight
+            ? F.color(Math.floor(gx / 128), Math.floor(gy / 128))
+            : [255, 255, 255, 255];
+        },
+      });
+      fs.writeFileSync(path.join(t.session.downloads, name), image);
+      R.pollDownloads(t.session, wall + (sequence - 1) * 500);
+      R.pollDownloads(t.session, wall + (sequence - 1) * 500 + 250);
+      const intent = {
+          schemaVersion: 1,
+          runId: t.session.runId,
+          sequence,
+          fixtureId: f.id,
+          gesture,
+          startedAt: timestamp,
+          state: "finished",
+          result: "success",
+          evidence: [evidence],
+        },
+        serialize = () => Buffer.from(JSON.stringify(intent)),
+        clock = sequence * 20000;
+      assert.equal(
+        R.observeAttempt(t.session, serialize(), clock).completed,
+        false,
+      );
+      assert.equal(
+        R.observeAttempt(t.session, serialize(), clock + R.FINAL_OBSERVATION_MS)
+          .completed,
+        true,
+      );
+      attempts.push({
+        fixtureId: f.id,
+        gesture,
+        startedAt: timestamp,
+        finishedAt: timestamp,
+        result: "success",
+        evidence: [evidence],
+      });
+    }
+    sequence++;
+    const cancel = {
+        schemaVersion: 1,
+        runId: t.session.runId,
+        sequence,
+        fixtureId: "preserve-required",
+        gesture: "cancel",
+        startedAt: timestamp,
+        state: "finished",
+        result: "pre-initiation-failure",
+        evidence: [evidence],
+      },
+      raw = Buffer.from(JSON.stringify(cancel));
+    R.observeAttempt(t.session, raw, sequence * 20000);
+    assert.equal(
+      R.observeAttempt(
+        t.session,
+        raw,
+        sequence * 20000 + R.FINAL_OBSERVATION_MS,
+      ).completed,
+      true,
+    );
+    attempts.push({
+      fixtureId: cancel.fixtureId,
+      gesture: "cancel",
+      startedAt: timestamp,
+      finishedAt: timestamp,
+      result: cancel.result,
+      evidence: [evidence],
+    });
+    const reviewer = {
+      schemaVersion: 1,
+      runId: t.session.runId,
+      packageSha256: t.f.expected.packageSha256,
+      browser: t.f.expected.browser,
+      extension: {
+        id: "a".repeat(32),
+        version: t.f.expected.version,
+        sourceRoute: "native-extension-detail",
+        evidence: [evidence],
+      },
+      downloadsPreference: {
+        askWhereToSave: true,
+        sourceRoute: "native-preferences-observation",
+        evidence: [evidence],
+      },
+      display: { scale: 1, dpr: 0.125, zoom: 1 },
+      cleanup: {
+        browserClosed: true,
+        sourceRoute: "native-owned-window-closed",
+        evidence: [evidence],
+      },
+      checks: qa(t.f.expected).checks.map((c) => ({
+        ...c,
+        evidence: [evidence],
+      })),
+      attempts,
+      reviewer: "Synthetic unit fixture; not a native qualification reviewer",
+      limitations: [],
+    };
+    t.child.emit("exit", 0, null);
+    const validated = R.completeRun(
+      t.session,
+      Buffer.from(JSON.stringify(reviewer)),
+    );
+    assert.equal(Q.isValidatedQa(validated), true);
+    assert.equal(validated.repository, "synthetic/qa-fixture");
+    const bytes = fs.readFileSync(t.f.options().reportPath),
+      oracles = JSON.parse(
+        fs.readFileSync(
+          path.join(t.session.evidenceDir, "native-oracles.json"),
+        ),
+      );
+    assert.equal(oracles.qaSha256, Q.digest(bytes));
+    assert.deepEqual(bytes, Q.canonical(validated));
+    assert.equal(oracles.downloads.length, 7);
+    assert.ok(oracles.downloads.every((f) => f.oracle.passed));
+    assert.ok(fs.existsSync(t.session.profile));
+    assert.equal(t.killed, 0);
+  }));
