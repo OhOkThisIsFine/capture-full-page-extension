@@ -134,4 +134,3 @@ Wayland requires current-user0700 runtime directory and current-user socket. Rem
 foreign owners, unsafe modes and linked leaf bindings fail before browser launch. No general
 session bus, provider secret or broad environment is inherited. Native GUI connection remains
 unrun in this source-only follow-up.
-

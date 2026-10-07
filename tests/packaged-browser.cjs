@@ -696,9 +696,11 @@ function validateReviewer(session, raw) {
       s.attemptJournal.every((a) => a.completed),
     "Missing observed per-attempt native timeline",
   );
-  const nestedGeometry = Q.parse(
-    ownedFile(s.root, "evidence/nested-static-shell-geometry.json").bytes,
-  );
+  const geometryBytes = ownedFile(
+      s.root,
+      "evidence/nested-static-shell-geometry.json",
+    ).bytes,
+    nestedGeometry = Q.parse(geometryBytes);
   Q.record(nestedGeometry, [
     "runId",
     "sourceRoute",
@@ -725,9 +727,7 @@ function validateReviewer(session, raw) {
   s.nestedGeometryObservation = {
     ...nestedGeometry,
     evidence: evidenceRefs(s.root, nestedGeometry.evidence),
-    sha256: Q.digest(
-      ownedFile(s.root, "evidence/nested-static-shell-geometry.json").bytes,
-    ),
+    sha256: Q.digest(geometryBytes),
   };
   const assigned = new Set(),
     gestures = new Set(),
@@ -884,6 +884,7 @@ function completeRun(session, raw) {
         oracle: f.oracle,
       })),
       installedObservation: s.installedObservation,
+      nestedGeometryObservation: s.nestedGeometryObservation,
       childExit: s.childExit,
       qaSha256: Q.digest(Q.canonical(validated)),
     }),

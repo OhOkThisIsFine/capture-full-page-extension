@@ -623,6 +623,10 @@ test("synthetic complete run binds exact report bytes and decoded PNGs after eve
       limitations: [],
     };
     t.child.emit("exit", 0, null);
+    assert.throws(
+      () => R.completeRun(t.session, Buffer.from(JSON.stringify(reviewer))),
+      /ENOENT/,
+    );
     fs.writeFileSync(
       path.join(
         t.session.evidenceDir,
@@ -649,6 +653,21 @@ test("synthetic complete run binds exact report bytes and decoded PNGs after eve
           path.join(t.session.evidenceDir, "native-oracles.json"),
         ),
       );
+    assert.equal(
+      oracles.nestedGeometryObservation.sha256,
+      Q.digest(
+        fs.readFileSync(
+          path.join(
+            t.session.evidenceDir,
+            "evidence/nested-static-shell-geometry.json",
+          ),
+        ),
+      ),
+    );
+    assert.deepEqual(oracles.nestedGeometryObservation.expanded, {
+      width: 2048,
+      height: 1088,
+    });
     assert.equal(oracles.qaSha256, Q.digest(bytes));
     assert.deepEqual(bytes, Q.canonical(validated));
     assert.equal(oracles.downloads.length, 7);
