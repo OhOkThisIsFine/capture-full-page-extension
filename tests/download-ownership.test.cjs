@@ -10,12 +10,21 @@ const {
   deferred,
 } = require("./dispatcher-harness.cjs");
 const tick = () => new Promise((resolve) => setImmediate(resolve));
-async function waitFor(predicate) {
-  for (let step = 0; step < 100; step++) {
-    if (predicate()) return;
-    await tick();
+async function awaitFixture(promise) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(
+          () => reject(Error("synthetic fixture readiness timed out")),
+          2000,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
   }
-  assert.ok(predicate(), "synthetic scheduling bound exhausted");
 }
 async function output(c) {
   const p = prep(scope(), { height: 180 });
@@ -219,7 +228,7 @@ test("ID zero binds once and early native completion reconciles before promise r
       },
     }),
     run = w.run();
-  await waitFor(() => w.downloads.length === 1);
+  await awaitFixture(w.downloadEntered.promise);
   assert.equal(w.downloads.length, 1);
   const download = {
     id: 0,
@@ -264,7 +273,7 @@ test("held download foreground times out once and late ID keeps the original arm
   const d = deferred(),
     w = worker({ height: 180, download: () => d.promise }),
     run = w.run();
-  await waitFor(() => w.downloads.length === 1);
+  await awaitFixture(w.downloadEntered.promise);
   assert.equal(w.downloads.length, 1);
   for (const callback of [...w.timers.values()]) callback();
   await run;
@@ -284,7 +293,7 @@ test("cancellation after invocation retains armed source and never replays", asy
   const d = deferred(),
     w = worker({ height: 180, download: () => d.promise }),
     run = w.run();
-  await waitFor(() => w.downloads.length === 1);
+  await awaitFixture(w.downloadEntered.promise);
   w.workerContext.chrome.tabs.onActivated.emit({ windowId: 0, tabId: 1 });
   w.workerContext.chrome.tabs.onActivated.emit({ windowId: 0, tabId: 0 });
   for (const callback of [...w.timers.values()]) callback();
@@ -316,16 +325,18 @@ test("never-invoked cleanup releases exact armed output after lost arm acknowled
     runtime = w.workerContext.chrome.runtime,
     send = runtime.sendMessage;
   let armed;
+  const armEntered = deferred();
   runtime.sendMessage = async (m) => {
     const result = await send(m);
     if (m.type === "download-arm") {
       armed = result;
+      armEntered.resolve(result);
       return new Promise(() => {});
     }
     return result;
   };
   const run = w.run();
-  await waitFor(() => !!armed);
+  await awaitFixture(armEntered.promise);
   assert.equal(armed.entry.sourceState, "armed");
   for (const callback of [...w.timers.values()]) callback();
   await assert.rejects(run, (e) => e.code === "TRANSPORT_FAILED");
@@ -532,7 +543,8 @@ test("URL and partial ledger insertion failure leave no orphan handoff charge", 
   }
 });
 test("events arriving during held search require a second reconciliation pass", async () => {
-  const held = deferred();
+  const held = deferred(),
+    searchEntered = deferred();
   let first = true,
     searches = 0,
     w;
@@ -540,6 +552,7 @@ test("events arriving during held search require a second reconciliation pass", 
     height: 180,
     search: (query) => {
       searches++;
+      searchEntered.resolve();
       if (first) {
         first = false;
         return held.promise;
@@ -552,7 +565,7 @@ test("events arriving during held search require a second reconciliation pass", 
     },
   });
   await w.run();
-  await waitFor(() => searches === 1);
+  await awaitFixture(searchEntered.promise);
   const native = {
     id: 0,
     url: w.downloads[0].url,
@@ -579,7 +592,7 @@ test("synchronous invocation boundary refuses a second native call for the same 
   const d = deferred(),
     w = worker({ height: 180, download: () => d.promise }),
     run = w.run();
-  await waitFor(() => w.downloads.length === 1);
+  await awaitFixture(w.downloadEntered.promise);
   const operation = [...w.workerApi.liveOperations][0];
   assert.throws(
     () => w.workerApi.invokeDownloadOnce(operation, w.downloads[0]),
@@ -633,6 +646,7 @@ test("held native compressor read survives bounded cancellation only as pending 
   await c.request(p, "start", { prep: p });
   await c.frame(p, c.P.nextFrameSpec(c.P.makeTraversal(p), null));
   let reading = false;
+  const readEntered = deferred();
   c.c.CompressionStream = class {
     constructor() {
       this.writable = new WritableStream();
@@ -640,6 +654,7 @@ test("held native compressor read survives bounded cancellation only as pending 
         getReader: () => ({
           read() {
             reading = true;
+            readEntered.resolve();
             return held.promise;
           },
           cancel: () => Promise.reject(Error("synthetic cancel rejection")),
@@ -649,7 +664,8 @@ test("held native compressor read survives bounded cancellation only as pending 
     }
   };
   const finish = c.request(p, "finish", { intentId: scope().owner });
-  await waitFor(() => reading);
+  await awaitFixture(readEntered.promise);
+  assert.equal(reading, true);
   await c.request(p, "abort");
   c.advance(2000);
   assert.equal((await finish).ok, false);

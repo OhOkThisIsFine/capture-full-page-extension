@@ -213,7 +213,7 @@ function compositor(options = {}) {
   const P = protocol(c);
   vm.runInContext(
     fs.readFileSync("offscreen.js", "utf8") +
-      "\nglobalThis.api={sessions,resources,outputRecords,statusSnapshot,reserveBytes,createSession,validateTileCoverage,encodePngChunk,encodePngFromTiles,collectIdatChunks,makeScanlineSource,finalizeTile,getTile,finalizeTilesBefore};",
+      "\nglobalThis.api={sessions,resources,outputRecords,statusSnapshot,reserveBytes,addFrame,createSession,validateTileCoverage,encodePngChunk,encodePngFromTiles,collectIdatChunks,makeScanlineSource,finalizeTile,getTile,finalizeTilesBefore};",
     c,
   );
   const envelope = (identity, type, payload = {}) => {
@@ -358,6 +358,8 @@ function worker(options = {}) {
     downloads = [],
     items = [],
     injections = [];
+  const downloadEntered = deferred(),
+    captureEntered = deferred();
   const comp = compositor({ ...options, clock }),
     identity = scope();
   let pagePrep,
@@ -451,6 +453,7 @@ function worker(options = {}) {
         captureVisibleTab: async () => {
           captureTimes.push(clock.now);
           captureCalls++;
+          captureEntered.resolve(captureCalls);
           if (options.capture) await options.capture(captureCalls);
           return "data:image/png;base64,AA==";
         },
@@ -463,6 +466,7 @@ function worker(options = {}) {
       downloads: {
         download: (item) => {
           downloads.push(item);
+          downloadEntered.resolve(item);
           return options.download ? options.download(item) : Promise.resolve(0);
         },
         search: (query) =>
@@ -514,6 +518,8 @@ function worker(options = {}) {
     captureTimes,
     frames,
     downloads,
+    downloadEntered,
+    captureEntered,
     items,
     injections,
     timers,

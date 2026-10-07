@@ -673,6 +673,7 @@ async function addFrame(message) {
   if (!s) throw new Error("Unknown capture session.");
   renewSession(message.sessionId);
 
+  P.validateSpec(s.plan, message.spec);
   const expected = P.nextFrameSpec(s.plan, s.lastAcceptedSpec);
   if (!P.sameSpec(message.spec, expected))
     throw P.fault(

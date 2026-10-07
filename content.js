@@ -326,7 +326,7 @@
     }
   }
   function snapshot(context,spec) {
-    checkOwner(context);
+    checkOwner(context);P.validateSpec(context.plan,spec);
     if(!P.sameSpec(spec,context.commandedSpec))throw P.fault("FRAME_SEQUENCE_MISMATCH","Snapshot does not match commanded frame.");
     assertSupportedMapping(context);
     const metrics=liveMetrics(context),original=context.signature;
@@ -338,7 +338,7 @@
       scrollEpoch:context.scrollEpoch,warnings:[...context.warnings].sort()};
   }
   async function moveTo(context,spec) {
-    checkOwner(context);
+    checkOwner(context);P.validateSpec(context.plan,spec);
     const expected=P.nextFrameSpec(context.plan,context.lastAcceptedSpec);
     if(!P.sameSpec(spec,expected) && !P.sameSpec(spec,context.commandedSpec))throw P.fault("FRAME_SEQUENCE_MISMATCH","Position does not match planned traversal.");
     if(context.commandedSpec && !P.sameSpec(spec,context.commandedSpec) && !P.sameSpec(context.commandedSpec,context.lastAcceptedSpec))throw P.fault("FRAME_NOT_ACCEPTED");

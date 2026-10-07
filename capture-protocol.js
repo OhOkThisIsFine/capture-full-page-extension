@@ -403,7 +403,10 @@
     });
   }
   function sameSpec(a, b) {
-    return !!a && !!b && specFields.every((key) => a[key] === b[key]);
+    if (!a || !b) return false;
+    ownRecord(a, specFields);
+    ownRecord(b, specFields);
+    return specFields.every((key) => a[key] === b[key]);
   }
   function validateSpec(plan, spec) {
     ownRecord(spec, specFields);
