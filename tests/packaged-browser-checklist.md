@@ -40,8 +40,7 @@ Serve only the runner's explicit synthetic loopback fixture routes. Before each 
 This intent marker is not gesture proof: retain separate screenshots/recordings and notes of
 actual toolbar, top-page context menu, iframe context menu, popup reopen and cancellation.
 Update the marker to finished only after observing the native outcome. Each attempt has a
-nonrenewable 900000ms bound. The runner observes final native initiation for 15000ms with one
-250ms polling tolerance. Success requires exactly one stable PNG; pre-initiation failure zero.
+nonrenewable 900000ms bound. The runner observes final native initiation for at least 15000ms within the independent overall attempt deadline. Success requires exactly one stable PNG; pre-initiation failure zero.
 Partial files, duplicate or unattributed outputs block completion. Do not remove them to pass.
 
 Set viewport dimensions through ordinary UI and record CSS viewport, display scale, DPR and
@@ -135,3 +134,4 @@ Wayland requires current-user0700 runtime directory and current-user socket. Rem
 foreign owners, unsafe modes and linked leaf bindings fail before browser launch. No general
 session bus, provider secret or broad environment is inherited. Native GUI connection remains
 unrun in this source-only follow-up.
+

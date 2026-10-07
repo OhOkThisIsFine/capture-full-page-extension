@@ -79,6 +79,7 @@ function partial(session, reason) {
         inventorySha256: s.expected.inventorySha256,
       },
       installedObservation: s.installedObservation,
+      nestedGeometryObservation: s.nestedGeometryObservation,
       browserObservation: s.browserIdentity,
       checks: Q.requiredChecks(s.selector).map((r) => ({
         id: r.id,
@@ -589,10 +590,7 @@ function observeAttempt(session, raw, now = performance.now()) {
     );
     evidenceRefs(s.root, a.evidence);
     active.finishedIntentAt ??= now;
-    Q.requireThat(
-      now <= active.finishedIntentAt + FINAL_OBSERVATION_MS + POLL_MS,
-      "Final native-initiation observation timeout",
-    );
+
     const fixture = s.fixtures.find((f) => f.id === a.fixtureId),
       matches = s.stableFiles.filter(
         (f) =>
@@ -724,7 +722,13 @@ function validateReviewer(session, raw) {
       ),
     "Nested fixture native pre/post/restored geometry missing or mismatched",
   );
-  evidenceRefs(s.root, nestedGeometry.evidence);
+  s.nestedGeometryObservation = {
+    ...nestedGeometry,
+    evidence: evidenceRefs(s.root, nestedGeometry.evidence),
+    sha256: Q.digest(
+      ownedFile(s.root, "evidence/nested-static-shell-geometry.json").bytes,
+    ),
+  };
   const assigned = new Set(),
     gestures = new Set(),
     fixtureIds = new Set();

@@ -350,14 +350,13 @@ test("attempt deadline cannot renew and metadata filenames alone cannot qualify 
       R.observeAttempt(t.session, serialize(), 100).completed,
       false,
     );
-    assert.throws(
-      () =>
-        R.observeAttempt(
-          t.session,
-          serialize(),
-          100 + R.FINAL_OBSERVATION_MS + R.POLL_MS + 1,
-        ),
-      /observation timeout/,
+    assert.equal(
+      R.observeAttempt(
+        t.session,
+        serialize(),
+        100 + R.FINAL_OBSERVATION_MS + 5000,
+      ).completed,
+      false,
     );
     const raw = {
       schemaVersion: 1,
@@ -439,7 +438,8 @@ test("native final observation waits fifteen seconds and rejects duplicate or st
       false,
     );
     assert.equal(
-      R.observeAttempt(t.session, raw(), R.FINAL_OBSERVATION_MS).completed,
+      R.observeAttempt(t.session, raw(), R.FINAL_OBSERVATION_MS + 5000)
+        .completed,
       true,
     );
     assert.equal(
@@ -757,4 +757,32 @@ test("nested fixture begins at natural shell height and grows after static expan
   assert.ok(f.html.includes("html,body{width:2048px}"));
   assert.ok(f.html.includes("height:256px;width:2048px;overflow:auto"));
   assert.ok(!f.html.includes("html,body{width:2048px;height:1088px}"));
+});
+test("CRC-valid actual PNG seam and edge corruptions preserve all former cell-center samples but fail the tile oracle", () => {
+  for (const id of ["tile-boundary-8192", "tile-boundary-adaptive"]) {
+    const f = F.fixtures().find((f) => f.id === id),
+      seam = id.endsWith("8192") ? 8192 : 2048;
+    for (const kind of ["row", "edge"]) {
+      const image = P.decodePng(
+        png(f.width, f.height, {
+          pixel(x, y) {
+            return (
+              kind === "row" ? y === seam : x === f.width - 1 && y === seam - 1
+            )
+              ? [0, 0, 0, 255]
+              : F.color(Math.floor(x / 128), Math.floor(y / 128));
+          },
+        }),
+      );
+      for (let y = 0; y < f.height; y += 128)
+        for (let x = 0; x < f.width; x += 128) {
+          const py = Math.floor(y + Math.min(64, (f.height - y) / 2));
+          assert.deepEqual(
+            image.pixel(x + 64, py),
+            F.color(x / 128, Math.floor(y / 128)),
+          );
+        }
+      assert.throws(() => F.verifyPixels(image, f), /seam/);
+    }
+  }
 });
