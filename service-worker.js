@@ -596,7 +596,7 @@ function cancelRequestedOperation({ operationId, tabId, incognito }) {
   operation.controller.abort();
   abortOffscreenSession(operation).catch(() => {});
   const binding = operation.currentContentBinding;
-  binding?.rpc
+  operation.cancelAcknowledgement = binding?.rpc
     .call("cancel", { reason: "USER_CANCELLED" })
     .then((summary) => {
       operation.restoration = WP.validateRestoreSummary(summary);
@@ -604,7 +604,18 @@ function cancelRequestedOperation({ operationId, tabId, incognito }) {
         restoration: operation.restoration,
       });
     })
-    .catch(() => {});
+    .catch(() => {
+      operation.restoration = {
+        status: "unverified",
+        restoredCount: 0,
+        preservedPageChanges: 0,
+        failedCount: 0,
+        codes: ["PORT_DISCONNECTED"],
+      };
+      setOperationState(operation, "cancelled", {
+        restoration: operation.restoration,
+      });
+    });
   return setOperationState(operation, "cancelled");
 }
 function projectOwnedStatus(entry, { recover = false } = {}) {
@@ -677,23 +688,35 @@ async function recoverOperationStatus(identity) {
       text: "Ready to capture. Earlier results may be unavailable after restart.",
     };
   }
-  // Live outputs and bounded terminal tombstones have distinct timestamp fields.
-  // Only a strictly newest observation can recover an operation; ties stay idle.
-  const observedAt = (entry) =>
-    entry.kind === "output" ? entry.createdAt : entry.terminalAt;
-  const matches = entries
-    .filter(
-      (entry) =>
-        entry.tabId === identity.tabId &&
-        entry.windowId === identity.windowId &&
-        entry.incognito === identity.incognito,
-    )
-    .sort((a, b) => observedAt(b) - observedAt(a));
-  if (
-    matches.length &&
-    (matches.length === 1 || observedAt(matches[0]) > observedAt(matches[1]))
-  )
+  const matches = entries.filter(
+    (entry) =>
+      entry.tabId === identity.tabId &&
+      entry.windowId === identity.windowId &&
+      entry.incognito === identity.incognito,
+  );
+  if (matches.length === 1)
     return projectOwnedStatus(matches[0], { recover: true });
+  const live = matches
+    .filter((entry) => entry.kind === "output")
+    .sort((a, b) => b.createdAt - a.createdAt);
+  // Terminal time orders completions, not captures. An earlier tombstone can
+  // be excluded; overlapping terminal/live records or multiple tombstones
+  // cannot establish newest operation authority with this unchanged schema.
+  if (
+    live.length &&
+    (live.length === 1 || live[0].createdAt > live[1].createdAt) &&
+    matches.every(
+      (entry) =>
+        entry.kind === "output" || entry.terminalAt < live[0].createdAt,
+    )
+  )
+    return projectOwnedStatus(live[0], { recover: true });
+  if (matches.length)
+    return {
+      ...current,
+      phase: "uncertain",
+      text: "Earlier capture order is uncertain after restart.",
+    };
   return {
     ...current,
     text: "Ready to capture. Earlier results may be unavailable after restart.",
@@ -1173,6 +1196,12 @@ async function captureFullPage(tab, markInitialized, capture = null) {
     );
     throw error;
   } finally {
+    // Abort rejects foreground RPCs immediately; preserve the separately bounded
+    // owned cancel/restore acknowledgement before closing this page binding.
+    if (scope.cancelAcknowledgement) {
+      await scope.cancelAcknowledgement;
+      if (scope.restoration?.status === "acknowledged") prepared = false;
+    }
     if (prepared && rpc) {
       try {
         scope.restoration = WP.validateRestoreSummary(
@@ -1218,6 +1247,7 @@ function createPortRPC(port, scope, operation = null) {
     if (!item) return null;
     pending.delete(messageId);
     clearTimeout(item.timer);
+    item.signal?.removeEventListener("abort", item.onAbort);
     action(item);
     return item;
   };
@@ -1242,11 +1272,8 @@ function createPortRPC(port, scope, operation = null) {
   const onDisconnect = () => {
     disconnected = true;
     const err = new Error("The page capture connection was closed.");
-    for (const item of pending.values()) {
-      clearTimeout(item.timer);
-      item.reject(err);
-    }
-    pending.clear();
+    for (const id of [...pending.keys()])
+      settlePending(id, (item) => item.reject(err));
   };
 
   port.onMessage.addListener(onMessage);
@@ -1267,10 +1294,9 @@ function createPortRPC(port, scope, operation = null) {
       return new Promise((resolve, reject) => {
         const timer = setTimeout(
           () => {
-            const item = pending.get(id);
-            if (!item) return;
-            pending.delete(id);
-            reject(new Error(`Capture command "${method}" timed out.`));
+            settlePending(id, (item) =>
+              item.reject(new Error(`Capture command "${method}" timed out.`)),
+            );
           },
           ["restore", "cancel"].includes(method)
             ? operation && !["success", "fallback"].includes(payload?.reason)
@@ -1292,7 +1318,18 @@ function createPortRPC(port, scope, operation = null) {
               ),
         );
 
-        pending.set(id, { resolve, reject, timer });
+        const signal =
+          operation && !["restore", "cancel"].includes(method)
+            ? operation.controller.signal
+            : null;
+        const onAbort = () =>
+          settlePending(id, (item) =>
+            item.reject(WP.fault(operation.cancelReason || "USER_CANCELLED")),
+          );
+        pending.set(id, { resolve, reject, timer, signal, onAbort });
+        signal?.addEventListener("abort", onAbort, { once: true });
+        if (signal?.aborted) onAbort();
+        if (!pending.has(id)) return;
         try {
           port.postMessage({
             id,
@@ -1313,11 +1350,8 @@ function createPortRPC(port, scope, operation = null) {
       port.onMessage.removeListener(onMessage);
       port.onDisconnect.removeListener(onDisconnect);
       const err = new Error("Capture RPC closed.");
-      for (const item of pending.values()) {
-        clearTimeout(item.timer);
-        item.reject(err);
-      }
-      pending.clear();
+      for (const id of [...pending.keys()])
+        settlePending(id, (item) => item.reject(err));
     },
   };
 }

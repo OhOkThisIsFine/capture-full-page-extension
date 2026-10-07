@@ -2015,7 +2015,13 @@
       y1: logicalY + rect.bottom - viewport.sourceTop,
     };
   }
-  function measureSuppressionFootprint(element, context) {
+  async function checkpointDOMWork(context) {
+    checkOwner(context);
+    context.domWorkSinceYield = (context.domWorkSinceYield || 0) + 1;
+    if (context.domWorkSinceYield >= P.DOM_BATCH_SIZE) await yieldDOM(context);
+    checkOwner(context);
+  }
+  async function measureSuppressionFootprint(element, context) {
     const bound = borderRect(element);
     let hasDescendants = false,
       textRects = 0,
@@ -2030,7 +2036,7 @@
         reason: "unqualified-viewport",
       };
     for (const node of allElements(element, context)) {
-      checkOwner(context);
+      await checkpointDOMWork(context);
       if (++inspected > P.DOM_BATCH_SIZE)
         return { eligible: false, footprint: null, reason: "ink-budget" };
       const css = computed(node),
@@ -2104,6 +2110,7 @@
       {
         let children = 0;
         for (let child = node.firstChild; child; child = child.nextSibling) {
+          await checkpointDOMWork(context);
           if (++children > P.MAX_DISCOVERED_ELEMENTS)
             throw P.fault("RESOURCE_LIMIT");
           discoverElement(context, child);
@@ -2133,6 +2140,7 @@
                 throw P.fault("RESOURCE_LIMIT");
               textRects += rects.length;
               for (let index = 0; index < rects.length; index++) {
+                await checkpointDOMWork(context);
                 const r = rects[index];
                 if (
                   r.width > 0 &&
@@ -2172,6 +2180,14 @@
           ))
     )
       return { eligible: false, footprint: null, reason: "ink-not-clipped" };
+    checkOwner(context);
+    const finalBound = borderRect(element);
+    if (
+      ["left", "top", "right", "bottom", "width", "height"].some(
+        (key) => finalBound[key] !== bound[key],
+      )
+    )
+      throw P.fault("GEOMETRY_CHANGED");
     return {
       eligible: true,
       footprint: bound,
@@ -2226,8 +2242,10 @@
         candidates.push({ element, anchor });
       }
       for (const { element, anchor } of candidates) {
+        await checkpointDOMWork(context);
         const natural = borderRect(element),
-          footprint = measureSuppressionFootprint(element, context);
+          footprint = await measureSuppressionFootprint(element, context);
+        checkOwner(context);
         reserveMetadata(context, 256);
         context.occluders.set(element, {
           element,
@@ -2298,7 +2316,7 @@
       if (rect.width <= 0 || rect.height <= 0) continue;
       let record = context.occluders.get(element);
       if (!record) {
-        const measured = measureSuppressionFootprint(element, context);
+        const measured = await measureSuppressionFootprint(element, context);
         record = {
           element,
           document: element.ownerDocument,
@@ -2325,7 +2343,7 @@
         record.kind !== anchor.kind
       )
         throw P.fault("GEOMETRY_CHANGED");
-      const measured = measureSuppressionFootprint(element, context);
+      const measured = await measureSuppressionFootprint(element, context);
       if (
         record.eligible !==
           (measured.eligible &&
@@ -2385,8 +2403,13 @@
       ) {
         assertMappingUnchanged(context);
         const again = classifyCaptureAnchor(element, context),
-          bounded = measureSuppressionFootprint(element, context);
-        if (again.kind !== record.kind || !bounded.eligible)
+          bounded = await measureSuppressionFootprint(element, context);
+        assertMappingUnchanged(context);
+        if (
+          again.kind !== record.kind ||
+          !bounded.eligible ||
+          classifyCaptureAnchor(element, context).kind !== record.kind
+        )
           throw P.fault("GEOMETRY_CHANGED");
         hideElement(element);
       }

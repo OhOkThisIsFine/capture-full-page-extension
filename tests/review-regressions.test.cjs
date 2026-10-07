@@ -106,50 +106,174 @@ for (const stage of ["decode", "finalize"])
       await c.request(next, "abort");
       assert.equal(c.api.resources.size, 0);
     });
-test("recovery explicitly orders old tombstones and live outputs, keeps timestamp ties ambiguous", async () => {
-  const producer = worker();
-  await producer.run();
-  await producer.workerApi.reconcileOwnedDownloads();
-  await tick();
-  const live = [...producer.api.outputRecords.values()][0].wire;
-  const w = worker();
-  await tick();
-  const tombstone = (terminalAt) => ({
-    kind: "tombstone",
-    ...scope(),
-    intentId: scope().owner,
-    targetBrowser: "chrome",
-    ...identity,
-    sourceUrl: "blob:synthetic-prior",
-    downloadId: null,
-    sourceState: "expired",
-    downloadState: "unknown",
-    apiOutcome: "timed-out",
-    outcomeCode: "SOURCE_EXPIRED",
-    revision: 1,
-    terminalAt,
+test("recovery excludes a terminal capture completed before a later capture was encoded", async () => {
+  let downloadId = 0;
+  const w = worker({ height: 180, download: async () => downloadId++ });
+  await w.run();
+  const first = [...w.api.outputRecords.values()][0].wire;
+  w.items.push({
+    id: 0,
+    url: first.url,
+    incognito: false,
+    state: "complete",
+    paused: false,
   });
-  const older = tombstone(live.createdAt - 1);
-  w.P.validateOutputRecord(older);
-  const current = [...producer.api.outputRecords.values()][0];
-  w.api.outputRecords.clear();
-  w.api.outputRecords.set(older.intentId, { wire: older });
-  w.api.outputRecords.set(live.intentId, current);
+  await w.workerApi.reconcileOwnedDownloads();
+  assert.equal([...w.api.outputRecords.values()][0].wire.kind, "tombstone");
+  w.advance(20);
+  await w.run();
+  const latest = [...w.api.outputRecords.values()][1].wire;
   w.workerApi.operationStates.clear();
-  let recovered = await w.workerApi.recoverOperationStatus(identity);
-  assert.equal(recovered.operationId, live.operationId);
-  const newer = tombstone(live.createdAt + 1);
-  w.api.outputRecords.set(newer.intentId, { wire: newer });
-  w.workerApi.operationStates.clear();
-  recovered = await w.workerApi.recoverOperationStatus(identity);
-  assert.equal(recovered.operationId, newer.operationId);
-  assert.equal(recovered.phase, "expired");
-  newer.terminalAt = live.createdAt;
-  w.workerApi.operationStates.clear();
-  recovered = await w.workerApi.recoverOperationStatus(identity);
-  assert.equal(recovered.operationId, null);
-  assert.equal(recovered.phase, "idle");
+  const recovered = await w.workerApi.recoverOperationStatus(identity);
+  assert.equal(recovered.operationId, latest.operationId);
+  assert.notEqual(recovered.phase, "saved");
 });
+
+test("recovery keeps newer capture identity despite reversed native completion order", async () => {
+  let downloadId = 0;
+  const w = worker({ height: 180, download: async () => downloadId++ });
+  await w.run();
+  const older = [...w.api.outputRecords.values()][0].wire;
+  w.advance(20);
+  await w.run();
+  const newer = [...w.api.outputRecords.values()][1].wire;
+  assert.notEqual(older.operationId, newer.operationId);
+  w.items.push(
+    {
+      id: 0,
+      url: older.url,
+      incognito: false,
+      state: "in_progress",
+      paused: false,
+    },
+    {
+      id: 1,
+      url: newer.url,
+      incognito: false,
+      state: "complete",
+      paused: false,
+    },
+  );
+  await w.workerApi.reconcileOwnedDownloads();
+  const newerTerminal = [...w.api.outputRecords.values()][1].wire;
+  assert.equal(newerTerminal.kind, "tombstone");
+  w.advance(100);
+  w.items[0].state = "complete";
+  await w.workerApi.reconcileOwnedDownloads();
+  const olderTerminal = [...w.api.outputRecords.values()][0].wire;
+  assert.equal(olderTerminal.kind, "tombstone");
+  assert.ok(olderTerminal.terminalAt > newerTerminal.terminalAt);
+  w.workerApi.operationStates.clear();
+  const recovered = await w.workerApi.recoverOperationStatus(identity);
+  assert.equal(recovered.operationId, null);
+  assert.equal(recovered.phase, "uncertain");
+  assert.match(recovered.text, /order is uncertain/);
+  w.P.validatePublicStatus(recovered);
+});
+
+for (const method of ["prepare", "position"])
+  for (const cleanup of ["acknowledged", "timed-out"])
+    test(`cancel held posted ${method} clears foreground lock with ${cleanup} restoration`, async () => {
+      const w = worker({ height: 180 }),
+        entered = deferred(),
+        cancelEntered = deferred();
+      const timings = new Map(),
+        nativeTimer = w.workerContext.setTimeout,
+        nativeClear = w.workerContext.clearTimeout;
+      w.workerContext.setTimeout = (fn, ms) => {
+        const id = nativeTimer(fn, ms);
+        timings.set(id, ms);
+        return id;
+      };
+      w.workerContext.clearTimeout = (id) => {
+        timings.delete(id);
+        nativeClear(id);
+      };
+      const originalPost = w.contentPort.postMessage.bind(w.contentPort);
+      let heldMessage, cancelMessage, firstOperation;
+      w.contentPort.postMessage = (message) => {
+        firstOperation ||= message.operationId;
+        if (
+          message.operationId === firstOperation &&
+          message.method === method
+        ) {
+          heldMessage = message;
+          entered.resolve();
+          return;
+        }
+        if (
+          message.operationId === firstOperation &&
+          message.method === "cancel"
+        ) {
+          cancelMessage = message;
+          cancelEntered.resolve();
+          return;
+        }
+        originalPost(message);
+      };
+      const first = w.workerApi.startCapture(w.tab);
+      await entered.promise;
+      assert.ok(
+        [...timings.values()].includes(method === "prepare" ? 15000 : 5000),
+      );
+      w.workerApi.cancelRequestedOperation({
+        operationId: first.operationId,
+        tabId: 0,
+        incognito: false,
+      });
+      await cancelEntered.promise;
+      await tick();
+      // The original 15s/5s RPC timer is already gone. Only cleanup may hold the lock.
+      assert.ok(
+        ![...timings.values()].includes(method === "prepare" ? 15000 : 5000),
+      );
+      assert.ok([...timings.values()].some((ms) => ms > 0 && ms <= 2000));
+      const reply = (message, result) =>
+        w.contentPort.onMessage.emit({
+          replyTo: message.id,
+          protocolVersion: 1,
+          operationId: message.operationId,
+          sessionId: message.sessionId,
+          owner: message.owner,
+          result,
+        });
+      // A late old reply cannot finish prepare/position or initiate a download.
+      reply(heldMessage, { late: true });
+      assert.equal(w.downloads.length, 0);
+      if (cleanup === "acknowledged") {
+        reply(cancelMessage, {
+          status: "acknowledged",
+          restoredCount: 1,
+          preservedPageChanges: 0,
+          failedCount: 0,
+          codes: [],
+        });
+      } else {
+        w.clock.now += 2000;
+        for (const [id, ms] of [...timings])
+          if (ms > 0 && ms <= 2000) {
+            const fn = w.timers.get(id);
+            w.timers.delete(id);
+            fn?.();
+          }
+      }
+      await first.done;
+      assert.equal(w.workerApi.getActive(), null);
+      assert.equal(
+        w.workerApi.getOperationState(identity).restoration?.status,
+        cleanup === "acknowledged" ? "acknowledged" : "unverified",
+      );
+      const next = w.workerApi.startCapture(w.tab);
+      assert.ok(next);
+      await next.done;
+      reply(heldMessage, { late: true });
+      assert.equal(w.downloads.length, 1);
+      assert.equal(
+        w.workerApi.getOperationState(identity).operationId,
+        next.operationId,
+      );
+    });
+
 test("source expiry publishes terminal status without native events in Firefox shared route", async () => {
   const w = worker({ target: "firefox" });
   await w.run();
@@ -347,7 +471,12 @@ test("status polling observes expiry when the native notification wake-up is una
 test("control RPCs use phase-specific deadlines and cleanup gets one independent two-second grace", async () => {
   const w = worker(),
     scopeValue = scope(),
-    operation = { ...scopeValue, expiresAt: 900000, monoDeadline: 900000 };
+    operation = {
+      ...scopeValue,
+      expiresAt: 900000,
+      monoDeadline: 900000,
+      controller: new AbortController(),
+    };
   const timeouts = [],
     nativeTimer = w.workerContext.setTimeout;
   w.workerContext.setTimeout = (fn, ms) => {
@@ -568,3 +697,131 @@ test("a newer page style cannot be legitimized or overwritten by a repeated owne
   assert.equal(summary.preservedPageChanges, 1);
   assert.ok(summary.codes.includes("PAGE_STYLE_CHANGED"));
 });
+
+for (const phase of ["candidates", "children", "text-rectangles"])
+  test(`cancel reaches actual ${phase} footprint phase within owned DOM task batch`, async () => {
+    const h = content(),
+      preparing = h.api.prepare();
+    h.waits.shift().resolve();
+    await preparing;
+    h.api.enableGeometry();
+    const context = h.api.getState(),
+      doc = h.c.document;
+    h.c.getComputedStyle = (node, pseudo) => ({
+      position: node.anchored ? "fixed" : "static",
+      overflowX: "hidden",
+      overflowY: "hidden",
+    });
+    const box = {
+      left: 0,
+      top: 0,
+      right: 100,
+      bottom: 50,
+      width: 100,
+      height: 50,
+    };
+    let inspected = 0,
+      phaseEntered = false;
+    function element() {
+      return Object.assign(new h.c.HTMLElement(), {
+        nodeType: 1,
+        tagName: "DIV",
+        ownerDocument: doc,
+        parentElement: h.root,
+        anchored: true,
+        getRootNode: () => doc,
+        getBoundingClientRect() {
+          if (phase === "candidates") phaseEntered = true;
+          return box;
+        },
+      });
+    }
+    const target = element();
+    if (phase === "candidates") {
+      let tail = null;
+      for (let i = 0; i < 1000; i++) {
+        const node = element();
+        node.previousElementSibling = tail;
+        tail = node;
+      }
+      h.root.lastElementChild = tail;
+    } else if (phase === "children") {
+      let tail = null;
+      for (let i = 0; i < 1024; i++) {
+        const next = tail;
+        tail = {
+          nodeType: 3,
+          length: 0,
+          get nextSibling() {
+            phaseEntered = true;
+            inspected++;
+            return next;
+          },
+        };
+      }
+      target.firstChild = tail;
+    } else {
+      target.firstChild = { nodeType: 3, length: 1, nextSibling: null };
+      doc.createRange = () => ({
+        selectNodeContents() {},
+        detach() {},
+        getClientRects() {
+          phaseEntered = true;
+          return new Proxy(
+            { length: 1024 },
+            {
+              get(t, key) {
+                if (/^\d+$/.test(String(key))) {
+                  inspected++;
+                  return box;
+                }
+                return t[key];
+              },
+            },
+          );
+        },
+      });
+    }
+    let observed;
+    const entered = new Promise((resolve) => {
+      observed = resolve;
+    });
+    const nativeTimer = h.c.setTimeout,
+      nativeClear = h.c.clearTimeout,
+      token = { ownedPhase: phase };
+    let cleared = 0;
+    h.c.setTimeout = (fn, ms) => {
+      if (ms === 0 && phaseEntered) {
+        observed();
+        return token;
+      }
+      return nativeTimer(fn, ms);
+    };
+    h.c.clearTimeout = (id) => {
+      if (id === token) {
+        cleared++;
+        return;
+      }
+      nativeClear(id);
+    };
+    const pending =
+      phase === "candidates"
+        ? h.api.snapshotVisibleElements()
+        : h.api.measureSuppressionFootprint(target, context);
+    const rejected = assert.rejects(pending, (e) => e.code === "CANCELLED");
+    await entered;
+    assert.ok(context.domYields.size);
+    assert.ok(inspected <= 256);
+    assert.ok((context.occluders?.size || 0) <= 256);
+    const count = inspected,
+      heldMetadata = context.metadataBytes;
+    if (phase === "text-rectangles") assert.ok(context.observedAllocations > 0);
+    await h.api.restore(context);
+    await rejected;
+    await tick();
+    assert.equal(inspected, count);
+    assert.equal(context.domYields.size, 0);
+    assert.equal(cleared, 1);
+    if (phase === "text-rectangles")
+      assert.equal(context.metadataBytes, heldMetadata - (64 + 32 + 16 * 1024));
+  });
