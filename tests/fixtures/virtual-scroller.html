@@ -1,0 +1,104 @@
+<!doctype html><meta charset="utf-8" /><title>CFP QA virtual-__MODE__</title>
+<style>
+  html,
+  body {
+    margin: 0;
+  }
+  #host {
+    width: 600px;
+    height: 320px;
+    overflow: auto;
+    position: relative;
+  }
+  #spacer {
+    width: 900px;
+    height: 4000px;
+    position: relative;
+  }
+  .row {
+    position: absolute;
+    left: 0;
+    width: 900px;
+    height: 40px;
+    font: 2px sans-serif;
+  }
+  .edge {
+    position: absolute;
+    top: 0;
+    width: 20px;
+    height: 40px;
+  }
+  .left {
+    left: 0;
+    background: rgb(30, 210, 120);
+  }
+  .right {
+    right: 0;
+    background: rgb(230, 40, 90);
+  }
+</style>
+<section id="host"><div id="spacer"></div></section>
+<script>
+  "use strict";
+  const mode = "__MODE__",
+    host = document.querySelector("#host"),
+    spacer = document.querySelector("#spacer");
+  let pool = [],
+    timer;
+  function makeRow() {
+    const row = document.createElement("div");
+    row.className = "row";
+    row.innerHTML =
+      '<span class="edge left"></span><span class="edge right"></span><span class="identity"></span>';
+    return row;
+  }
+  function paint(row, index) {
+    row.dataset.logicalRow = String(index);
+    row.style.top = index * 40 + "px";
+    row.style.background = `rgb(${(index * 17) % 251},${(index * 29) % 251},${(index * 43) % 251})`;
+    row.querySelector(".identity").textContent = "row-" + index;
+  }
+  function render() {
+    const first = Math.max(0, Math.floor(host.scrollTop / 40) - 1),
+      count = Math.min(100 - first, Math.ceil(host.clientHeight / 40) + 2);
+    if (mode === "scroll-only") {
+      if (!pool.length) {
+        for (let i = 0; i < 100; i++) {
+          const r = makeRow();
+          paint(r, i);
+          pool.push(r);
+          spacer.append(r);
+        }
+      }
+      pool.forEach((r, i) => {
+        r.hidden = i < first || i >= first + count;
+      });
+    } else if (mode === "recycled") {
+      while (pool.length < count) {
+        const r = makeRow();
+        pool.push(r);
+        spacer.append(r);
+      }
+      pool.forEach((r, i) => {
+        r.hidden = i >= count;
+        if (i < count) paint(r, first + i);
+      });
+    } else {
+      spacer.replaceChildren();
+      pool = [];
+      for (let i = 0; i < count; i++) {
+        const r = makeRow();
+        paint(r, first + i);
+        pool.push(r);
+        spacer.append(r);
+      }
+    }
+  }
+  function gate() {
+    clearTimeout(timer);
+    timer = setTimeout(render, 20);
+  }
+  host.addEventListener("scroll", gate);
+  if (mode === "resize-observer") new ResizeObserver(gate).observe(host);
+  render();
+</script>

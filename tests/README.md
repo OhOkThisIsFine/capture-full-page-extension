@@ -176,3 +176,63 @@ header only after its natural horizontal fragments are accepted. Supply the same
 Playwright/pngjs/executable variables and task-owned `CFP_QA_OUTPUT` directory.
 It evaluates source without installing an extension; it does not test native
 captureVisibleTab, downloads, user grants, real worker replacement or Firefox.
+
+## Source-only packaged QA harness
+
+The shared [QA contract](../scripts/qa-contract.cjs), [candidate verifier](../scripts/verify-qa-candidate.cjs)
+and [packaged runner](packaged-browser.cjs) are source deliverables. The synthetic tests use
+explicit browser/process doubles and cannot qualify installation, native APIs or distribution.
+The [native checklist](packaged-browser-checklist.md) gives the separately reviewed GUI procedure.
+Run the dependency-free source tests with `node --test tests/*.test.cjs` under an appropriate
+credential/network isolation guard. Both package formats, all 128 capability combinations,
+invalid evidence, capability mismatches, cleanup, PNG tails and stable/duplicate output are tested.
+
+Preparation CLI (placeholders are required real reviewed inputs, not qualification metadata):
+
+```text
+node tests/packaged-browser.cjs --stage pre-submit --target chrome --package <original.zip> --inventory <build-manifest.json> --expected <protected-reviewed-input.json> --expected-review-sha256 <independent-sha256> --expected-package-sha256 <independent-sha256> --expected-inventory-sha256 <independent-sha256> --expected-browser-version <exact-version> --evidence-dir <new-owned-directory> --report <new-owned-directory/qa.json>
+```
+
+This default exits 2 and creates a partial report with every check unrun and no installed
+observation. `--launch`, used only in the separate approved native run, requires
+`CFP_CHROMIUM_EXECUTABLE` or `CFP_FIREFOX_EXECUTABLE` to identify the exact provisioned GUI binary.
+The binary digest/version is checked before launch. No headless/debugging/load-extension flags
+are accepted. Inputs and evidence reject symlink/junction paths. The approved canonical release
+inventory is mandatory; the existing development builder is not silently promoted to that role.
+
+Protected reviewed input has exactly: `repository`, `commit`, `target`, `version`,
+`packageSha256`, `inventorySha256`, `buildRunId`, `artifactId`, `capabilities`, `firstPublication`,
+`rulesBindingSha256`, and `browser`. Browser has `name`, `version`, `channel`, `executableSha256`.
+Capabilities has all seven booleans exported by `qa-contract.cjs.CAPABILITIES`. The first two
+are checked against the actual hashed candidate protocol in a bounded pure VM; this VM executes
+trusted reviewed source and is not a security sandbox for arbitrary code. Change/claim flags
+come from the independently reviewed diff/scope, never reviewer overrides. The rule digest is
+`bindingDigest({stage:'pre-submit',target,capabilities,firstPublication})`. JSON cannot prove its
+own approval origin: preserve the protected review input and independent SHA through the review
+boundary. Build/artifact IDs are actual positive decimal strings, never fixture IDs or guesses.
+
+For each genuine native attempt write owned `current-attempt.json` with exactly `schemaVersion:1`,
+`runId`, next integer `sequence` (1..64), `fixtureId`, `gesture` (`toolbar`, `context-menu-top`,
+`context-menu-iframe`, `cancel`), UTC `startedAt`, `state` (`running`/`finished`), `result` (null
+while running, then `success`/`pre-initiation-failure`) and evidence paths when finished.
+The coordinator measures its own nonrenewable deadline; editing timestamps cannot reset it.
+
+Copy the owned reviewer template to `reviewer.json`. Populate exactly its existing fields:
+`schemaVersion`, `runId`, `packageSha256`, `browser`, `extension`, `downloadsPreference`, `display`,
+`cleanup`, `checks`, `attempts`, `reviewer`, `limitations`. Extension is observed `id`, `version`,
+`sourceRoute:'native-extension-detail'`, `evidence`. Downloads preference is actual `askWhereToSave`,
+`sourceRoute:'native-preferences-observation'`, `evidence`. Display is observed `scale`, `dpr`, `zoom`.
+Cleanup is `browserClosed:true`, `sourceRoute:'native-owned-window-closed'`, `evidence` after closing
+the owned windows. Each check is exactly `id`, `status`, `evidence`. Each attempt is `fixtureId`,
+`gesture`, UTC `startedAt`/`finishedAt`, `result`, `evidence`, matching the coordinator journal.
+Evidence paths are relative forward-slash paths under the owned directory, nonempty ordinary
+files <=8MiB; refs are hashed in the final report. Reviewer<=160 bytes, <=8 limitations, <=8 refs
+per row, completed QA<=32768 UTF-8 bytes. Claim-only unrun requires an explicit `<checkId>:`
+limitation and evidence. Required unrun never qualifies. Metadata/file presence alone proves
+neither genuine gestures nor cleanup. A human reviewer supplies those observations for review.
+
+Exit 0 requires completed exact shared validation, native timeline, pixel/download oracles and
+owned browser exit/cleanup. Exit 1 means failed/invalid evidence; exit 2 means blocked/unrun.
+The final canonical report's exact byte hash is bound in `native-oracles.json`. Failed/unrun
+artifacts remain intact. Post-distribution/signed/provider receipts are rejected here; the shared
+rule table reserves those IDs but this bounded runner/record validator supports pre-submit only.

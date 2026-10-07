@@ -54,3 +54,15 @@ Do not transfer product execution there to evade execution or policy restriction
 The source-only Playwright/CDP diagnostics remain useful rendering evidence, but they do
 not replace these real installed/native observations. Parent coordinates independent
 review, merge and any later installation/deployment/store release.
+
+## Source harness follow-up
+
+The bounded source implementation now supplies `scripts/qa-contract.cjs`,
+`scripts/verify-qa-candidate.cjs`, `scripts/read-capabilities.cjs`,
+`tests/packaged-browser.cjs`, the independent PNG oracle and
+`tests/packaged-browser-checklist.md`. The previously missing local harness files are
+resolved by this source deliverable. Its default prepares owned artifacts and returns
+blocked/unrun; only a separate reviewed GUI run can record native qualification.
+The existing development builder still lacks the canonical release inventory/toolchain
+producer, and this source follow-up does not fabricate that provenance. Exact approved
+package/runtime inputs, actual native UI/evidence and independent review remain gates.
