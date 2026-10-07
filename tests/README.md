@@ -128,12 +128,31 @@ physical growth/shrinkage, separate complete data-URL/decoded bitmap limits, and
 five total capture calls per spec across retries. All source tests remain
 credential-free. No direct-browser or native-extension result is inferred.
 
-This checkpoint is incomplete. The canonical P3 resource/deadline/finish leases,
-P4 armed output ledger and one-shot normal adapter, and P5 recovery/notification,
-popup/status and exact envelope migration are still required. The preserved old
-revoke/download lifecycle is draft residue, not an approved compatibility seam.
-G1-G5 mapping/occlusion/restore ownership and R2 bounded effect enumeration also
-remain unqualified. Private/preserve capability literals stay false; their
-complete pre-injection admission checks are still part of the coordinated work.
-Do not merge, tag, install, activate or release this branch from synthetic tests.
-Real Q1/Q3/Q4-normal/Q5/Q6 and the separate Q7a toolchain gates remain unrun.
+The next draft checkpoint adds strict compositor request/response schemas,
+creator-local/recovery/context scope brands, a recovery-before-mutation barrier,
+verified Firefox reverse callbacks, permanent source-loss/content-port bindings,
+and a single Promise-form download invocation. The exact-intent output ledger
+retains ambiguous/paused sources, reconciles native item evidence, and releases
+storage only on allowed terminal evidence or fixed expiry. No raw URL release
+command remains. Private capability literals remain false and private or
+unverified tab context is rejected before injection.
+
+The encoder uses one deflate stream, bounded IDAT staging, an explicit scanline
+source and a charged Blob handoff. Allocation guards retain pending native input
+leases until settlement. `download-ownership.test.cjs` uses registered production
+dispatchers with synthetic APIs, checks allocation failures independently of
+session maps, parses PNG chunks/CRCs and tests consumed zlib input with mandatory
+trailing-data negatives. Arbitrary compressor-value fixtures test packing only.
+The external run guard used in this task denies real network/provider access and
+uncontrolled child processes before imports; publisher children are allowed only
+in disposable fixtures with explicit credential-free environments.
+
+This checkpoint remains incomplete. G1-G5 composed mapping, whole-subtree
+occlusion and pre-collapse scroll restoration, R2 element-local effect discovery,
+P5 public status/popup/cancellation UI, and the full P3 allocation/native-failure
+and deadline matrix still need implementation or verification. Source tests do
+not prove native peak memory, pixel attribution, native downloads, installed
+behavior or background replacement. Historical optional-browser statements above
+are not qualification evidence for this draft. Real Q1/Q3/Q4-normal/Q5/Q6 and the
+separate Q7a toolchain gates remain unrun. Do not merge, tag, install, activate or
+release this branch from synthetic tests.
