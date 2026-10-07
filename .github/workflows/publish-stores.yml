@@ -69,6 +69,12 @@ jobs:
           node --check offscreen.js
           node --check popup.js
 
+      - name: Check publisher shell syntax
+        run: bash -n scripts/publish_chrome.sh
+
+      - name: Run capture reliability regressions
+        run: node --test tests/*.test.cjs
+
       - name: Build Chrome and Firefox packages
         run: python scripts/build.py
 
