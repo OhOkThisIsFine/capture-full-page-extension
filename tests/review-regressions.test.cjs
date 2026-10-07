@@ -432,8 +432,32 @@ test("real root discovery yields within its DOM batch and cancellation removes o
     tail = node;
   }
   h.root.lastElementChild = tail;
+  // Observe the first actual owned task boundary, without allowing the host's
+  // timer ordering to run several DOM batches before cancellation is requested.
+  let observeYield;
+  const firstYield = new Promise((resolve) => {
+    observeYield = resolve;
+  });
+  const nativeSetTimeout = h.c.setTimeout,
+    nativeClearTimeout = h.c.clearTimeout;
+  const heldTimer = { ownedDOMYield: true };
+  let cleared = 0;
+  h.c.setTimeout = (fn, ms) => {
+    if (ms === 0) {
+      observeYield();
+      return heldTimer;
+    }
+    return nativeSetTimeout(fn, ms);
+  };
+  h.c.clearTimeout = (timer) => {
+    if (timer === heldTimer) {
+      cleared++;
+      return;
+    }
+    return nativeClearTimeout(timer);
+  };
   const discovering = h.api.discoverCaptureRoots(context, { remaining: 50000 });
-  await tick();
+  await firstYield;
   assert.ok(context.domYields.size);
   assert.ok(calls <= 256);
   await h.api.restore(context);
@@ -441,6 +465,7 @@ test("real root discovery yields within its DOM batch and cancellation removes o
   assert.ok(calls <= 256);
   assert.equal(styles.length, 0);
   assert.equal(context.domYields.size, 0);
+  assert.equal(cleared, 1);
 });
 test("per-frame bounded traversal rejects the 12001st element rather than scanning preparation's full allowance", async () => {
   const h = content(),
