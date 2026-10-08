@@ -11,6 +11,7 @@ try{
         $fixture=Join-Path $root ('installer-'+$flag.TrimStart('-'))
         $null=New-Item -ItemType Directory -Path (Join-Path $fixture 'scripts')
         $null=Git-Test $fixture @('init','-b','master')
+        $null=Git-Test $fixture @('config','core.autocrlf','false') # Fixture commits the exact copied bytes on every CI host.
         $null=Git-Test $fixture @('config','user.name','Synthetic installer test')
         $null=Git-Test $fixture @('config','user.email','synthetic@example.invalid')
         $proof=Join-Path $root ($flag.TrimStart('-')+'-helper-executed.txt')

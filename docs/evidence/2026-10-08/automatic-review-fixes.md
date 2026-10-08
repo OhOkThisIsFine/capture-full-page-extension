@@ -63,3 +63,5 @@ Approved workflow blobs are unchanged (Capture `a90b1f2f02feca9750239dda2a64d6f6
 Reddit `fb813a06a138cb874b37ef6e77746b9b4ad04c0a`); no pin refresh is required. Independent follow-up
 review still precedes installation. One owner Reload per extension after deployment remains the
 bootstrap; actual Brave marker-read/self-reload remains unrun.
+
+Windows CI run 37723202276 at Capture 43b2bf70627e64cf4c4c24d57c932dc77015ad2f failed the positive installer fixture: the host checkout supplied CRLF bytes, while synthetic Git's inherited autocrlf setting committed LF bytes. The fixture now sets core.autocrlf=false in its disposable repository so it commits the exact supplied bytes. Production exact-blob verification remains unchanged and refuses converted source bytes. Standalone verification after the fixture correction passed: `powershell.exe -NoProfile -File tests\installer.test.ps1` (19 Git-safety cases and 2 installer cases), retained in `automatic-installer-exact-byte-final.log`. The failed CI run is not a passed result; the follow-up commit requires its own CI verification.
