@@ -10,9 +10,9 @@ const source = fs.readFileSync(worker, "utf8");
 const watcher = source.match(/\/\/ owner-folder-update:begin[\s\S]*?\/\/ owner-folder-update:end/)[0];
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const marker = version => ({ schemaVersion: 1, commit: "a".repeat(40), releaseVersion: version });
-function harness({ version = "5.3.0", body = marker("5.3.1"), existing, ok = true, reloadThrows = false } = {}) {
+function harness({ version = "5.3.0", body = marker("5.3.1"), existing, ok = true, reloadThrows = false, diskVersion, manifestOk = true } = {}) {
   const calls = { fetch: [], creates: [], reload: 0, listeners: [], timers: [], clears: [] };
-  const state = { body, ok, pending: null };
+  const state = { body, ok, pending: null, diskVersion: diskVersion ?? body?.releaseVersion ?? version, manifestOk, onManifest: null };
   const chrome = {
     runtime: { getURL: value => "chrome-extension://synthetic/" + value, getManifest: () => ({ version }),
       reload() { calls.reload++; if (reloadThrows) throw Error("synthetic reload refusal"); } },
@@ -23,6 +23,10 @@ function harness({ version = "5.3.0", body = marker("5.3.1"), existing, ok = tru
     clearTimeout: value => calls.clears.push(value), async fetch(url, options) {
       calls.fetch.push({ url, options });
       if (state.pending) await state.pending;
+      if (url.includes("/manifest.json?")) {
+        if (state.onManifest) state.onManifest();
+        return { ok: state.manifestOk, text: async () => JSON.stringify({ version: state.diskVersion }) };
+      }
       return { ok: state.ok, text: async () => typeof state.body === "string" ? state.body : JSON.stringify(state.body) };
     } });
   return { calls, state, alarm(name = "owner-folder-update-v1") { for (const listener of calls.listeners) listener({ name }); } };
@@ -35,6 +39,8 @@ test("own marker reloads newer release without reading idle state or making prov
   assert.match(h.calls.fetch[0].url, /^chrome-extension:\/\/synthetic\/local-update-state\.json\?check=\d+$/);
   assert.equal(h.calls.fetch[0].options.cache, "no-store");
   assert.equal(h.calls.fetch[0].options.credentials, "omit");
+  assert.match(h.calls.fetch[1].url, /^chrome-extension:\/\/synthetic\/manifest\.json\?check=\d+$/);
+  for (const call of h.calls.fetch) assert.equal(call.options.cache, "no-store");
   h.alarm(); await tick(); assert.equal(h.calls.reload, 1);
 });
 test("suspended/recreated worker ensures alarm and compares loaded manifest, never a marker baseline", async () => {
@@ -74,4 +80,21 @@ test("source integration is the actual worker and timer permission is explicitly
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
   assert.ok(manifest.permissions.includes("alarms"));
   assert.ok(!manifest.permissions.includes("nativeMessaging"));
+});
+test("manual rollback with a newer leftover marker never reloads across repeated worker starts", async () => {
+  for (let restart = 0; restart < 5; restart++) {
+    const h = harness({ version: "0.3.0", body: marker("0.3.1"), diskVersion: "0.3.0" });
+    await tick(); h.alarm(); await tick(); assert.equal(h.calls.reload, 0);
+  }
+  const ready = harness({ version: "0.3.0", body: marker("0.3.1"), diskVersion: "0.3.1" });
+  await tick(); assert.equal(ready.calls.reload, 1);
+});
+test("completed B cannot authorize reload into disk C and a reserved marker blocks an in-flight B read", async () => {
+  const mismatch = harness({ version: "1.0.0", body: marker("2.0.0"), diskVersion: "3.0.0" });
+  await tick(); assert.equal(mismatch.calls.reload, 0);
+  const reserved = harness({ version: "1.0.0", body: marker("2.0.0"), diskVersion: "2.0.0", ok: false });
+  await tick(); reserved.state.ok = true;
+  reserved.state.onManifest = () => { reserved.state.ok = false; };
+  reserved.alarm(); await tick(); assert.equal(reserved.calls.reload, 0);
+  assert.equal(reserved.calls.fetch.at(-1).url.includes("/local-update-state.json?"), true);
 });

@@ -33,6 +33,18 @@
       if (!current || !next) return;
       const index = next.findIndex((part, i) => part !== current[i]);
       if (index < 0 || next[index] < current[index]) return;
+      const manifestResponse = await fetch(api.runtime.getURL("manifest.json") + "?check=" + Date.now(), {
+        cache: "no-store", credentials: "omit", signal: controller.signal
+      });
+      if (!manifestResponse.ok) return;
+      const manifestText = await manifestResponse.text();
+      if (controller.signal.aborted || manifestText.length > 65536) return;
+      const diskManifest = JSON.parse(manifestText);
+      if (!diskManifest || diskManifest.version !== marker.releaseVersion) return;
+      const finalMarker = await fetch(api.runtime.getURL("local-update-state.json") + "?check=" + Date.now(), {
+        cache: "no-store", credentials: "omit", signal: controller.signal
+      });
+      if (!finalMarker.ok || await finalMarker.text() !== text || controller.signal.aborted) return;
       // The updater publishes this marker only after complete, verified checkout.
       reloading = true;
       try { api.runtime.reload(); } catch { reloading = false; }

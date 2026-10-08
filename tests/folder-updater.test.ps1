@@ -239,4 +239,4 @@ try {
     $script:Passed++
     Write-Host "PASS $script:Passed safety cases; real disposable Git, synthetic fetch/master; no network/browser."
     Write-Host "Retained synthetic fixtures: $root"
-} catch { Write-Error $_ -ErrorAction Continue; Write-Host "Retained failed fixtures: $root"; exit 1 }
+} catch { Write-Host "Retained failed fixtures: $root"; throw }

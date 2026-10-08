@@ -71,6 +71,8 @@ function Read-AutomaticCandidate {
     }
     $markerTracked=Invoke-RepoGit $Spec.Path @('ls-files','--error-unmatch','local-update-state.json') -AllowOne
     if ($markerTracked.Code -eq 0) { throw 'Completion marker must be local and untracked.' }
+    $targetMarker=Invoke-RepoGit $Spec.Path @('ls-tree','-r','--name-only',$commit,'--','local-update-state.json')
+    if ($targetMarker.Lines.Count) { throw 'Selected target tracks reserved completion marker; update refused.' }
     $ignored=Invoke-RepoGit $Spec.Path @('check-ignore','local-update-state.json') -AllowOne
     if ($ignored.Code -ne 0 -and $prepared.Before -ceq $commit) { throw 'Bootstrap marker ignore rule is not installed.' }
     [pscustomobject]@{Spec=$Spec;Prepared=$prepared;Run=$run}
@@ -108,6 +110,39 @@ function Stage-AutomaticCandidate {
     return $stage # Retain only this task-created snapshot; no old worktree cleanup.
 }
 
+function Read-OwnedCompletionMarker {
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return $null }
+    $file=Get-Item -LiteralPath $Path
+    if ($file.PSIsContainer -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $file.Length -gt 1024) { throw 'Unexpected marker file; preserve it.' }
+    $bytes=[IO.File]::ReadAllBytes($Path)
+    $data=[Text.Encoding]::UTF8.GetString($bytes)|ConvertFrom-Json
+    if (($data.PSObject.Properties.Name|Sort-Object) -join ',' -cne 'commit,releaseVersion,schemaVersion' -or
+        ($data.schemaVersion -isnot [int] -and $data.schemaVersion -isnot [long]) -or
+        $data.schemaVersion -ne 1 -or $data.commit -isnot [string] -or $data.releaseVersion -isnot [string] -or
+        $data.commit -cnotmatch '^[0-9a-f]{40}$') { throw 'Unrecognized existing marker; preserve it.' }
+    $null=Compare-ReleaseVersion $data.releaseVersion $data.releaseVersion
+    [pscustomobject]@{Data=$data;Bytes=$bytes}
+}
+
+function Reserve-CompletionMarker {
+    param($Candidate)
+    $plan=$Candidate.Prepared.Plan
+    Assert-CleanRepository $plan
+    if ((Read-GitValue $plan.Path @('rev-parse','HEAD')) -cne $Candidate.Prepared.Before) { throw 'Checkout changed before marker reservation.' }
+    $marker=Join-Path $plan.Path 'local-update-state.json'
+    $owned=Read-OwnedCompletionMarker $marker
+    if ($null -eq $owned) { return }
+    $version=(Get-Content -LiteralPath (Join-Path $plan.Path 'manifest.json') -Raw|ConvertFrom-Json).version
+    if ($owned.Data.commit -cne $Candidate.Prepared.Before -or $owned.Data.releaseVersion -cne $version) { throw 'Marker does not belong to current checkout; preserve it.' }
+    $backup=Join-Path $plan.Path ('.local-update-state.'+[Guid]::NewGuid().ToString('N')+'.tmp')
+    [IO.File]::Move($marker,$backup) # Atomically remove B before any C working-tree writes; retain exact bytes.
+    if ([Convert]::ToBase64String([IO.File]::ReadAllBytes($backup)) -cne [Convert]::ToBase64String($owned.Bytes)) {
+        if (-not (Test-Path -LiteralPath $marker)) {[IO.File]::Move($backup,$marker)}
+        throw 'Marker changed during reservation; foreign bytes preserved, update refused.'
+    }
+}
+
 function Publish-CompletionMarker {
     param($Candidate)
     $plan=$Candidate.Prepared.Plan
@@ -121,14 +156,11 @@ function Publish-CompletionMarker {
         if ((Read-GitValue $plan.Path @('hash-object',('--path='+$relative),'--',$relative)) -cne $blob) { throw 'Final file readback mismatch; marker withheld.' }
     }
     $marker=Join-Path $plan.Path 'local-update-state.json'
-    if (Test-Path -LiteralPath $marker) {
-        $existing=Get-Item -LiteralPath $marker
-        if ($existing.PSIsContainer -or ($existing.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $existing.Length -gt 1024) { throw 'Unexpected marker file; preserve it.' }
-        $old=Get-Content -LiteralPath $marker -Raw | ConvertFrom-Json
-        if (($old.PSObject.Properties.Name | Sort-Object) -join ',' -cne 'commit,releaseVersion,schemaVersion' -or
-            $old.schemaVersion -ne 1 -or $old.commit -cnotmatch '^[0-9a-f]{40}$') { throw 'Unrecognized existing marker; preserve it.' }
-        $null=Compare-ReleaseVersion $old.releaseVersion $old.releaseVersion
+    $owned=Read-OwnedCompletionMarker $marker
+    if ($null -ne $owned) {
+        $old=$owned.Data
         if ($old.commit -ceq $plan.Commit -and $old.releaseVersion -ceq $Candidate.Prepared.Version) { return }
+        throw 'Unexpected marker reappeared; preserve it and withhold completion.'
     }
     $temporary=Join-Path $plan.Path ('.local-update-state.'+[Guid]::NewGuid().ToString('N')+'.tmp')
     $payload=([ordered]@{schemaVersion=1;commit=$plan.Commit;releaseVersion=$Candidate.Prepared.Version}|ConvertTo-Json -Compress)+"`n"
@@ -155,7 +187,7 @@ function Start-AutomaticFolderUpdate {
             try {
                 $candidate=Read-AutomaticCandidate $spec
                 $changed=$candidate.Prepared.Before -cne $candidate.Prepared.Plan.Commit
-                if ($changed) {$null=Stage-AutomaticCandidate $candidate $StateRoot;Apply-RepositoryUpdate $candidate.Prepared}
+                if ($changed) {$null=Stage-AutomaticCandidate $candidate $StateRoot;Reserve-CompletionMarker $candidate;Apply-RepositoryUpdate $candidate.Prepared}
                 Publish-CompletionMarker $candidate
                 $rows += [pscustomobject]@{name=$spec.Name;status=$(if($changed){'updated'}else{'current'});version=$candidate.Prepared.Version;commit=$candidate.Prepared.Plan.Commit;ciRun=$candidate.Run}
             } catch {$rows += [pscustomobject]@{name=$spec.Name;status='skipped';reason=$_.Exception.Message}}

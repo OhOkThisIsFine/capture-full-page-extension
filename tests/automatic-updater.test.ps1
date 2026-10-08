@@ -94,6 +94,61 @@ try {
     if(Test-Path -LiteralPath (Join-Path $first.Path 'local-update-state.json')){throw 'Skipped repo published marker'}
     if(-not (Test-Path -LiteralPath (Join-Path $second.Path 'local-update-state.json'))){throw 'Successful main lacks completion marker'}
     $script:AutomaticPassed++
+    # B's marker is still newer than a loaded A worker. Actual automatic promotion must reserve B
+    # before the first C live-write call, then publish only the completely verified C marker.
+    $spec=New-AutomaticFixture 'automatic-marker-B-to-C';$hooks=Initialize-UpdateGit @($spec)
+    $candidateB=Read-AutomaticCandidate $spec
+    Apply-RepositoryUpdate $candidateB.Prepared;Publish-CompletionMarker $candidateB
+    $markerPath=Join-Path $spec.Path 'local-update-state.json'
+    $bytesB=[IO.File]::ReadAllBytes($markerPath)
+    $null=Git-Test $spec.Path @('checkout','-b','synthetic-release-C')
+    Set-Content -LiteralPath (Join-Path $spec.Path 'manifest.json') -Value '{"version":"3.0.0"}'
+    Set-Content -LiteralPath (Join-Path $spec.Path 'code.js') -Value 'synthetic complete C; never executed'
+    $null=Git-Test $spec.Path @('commit','-am','synthetic C')
+    $targetC=Read-GitValue $spec.Path @('rev-parse','HEAD')
+    $null=Git-Test $spec.Path @('checkout','master')
+    [IO.Directory]::Delete($hooks,$false)
+    $script:ObservedMasters[$spec.Path]=$targetC;$script:AutoSpecs=@($spec)
+    $script:ReservationPath=$spec.Path;$script:ReservationObserved=0
+    $script:ApplyBeforeMarkerTest=(Get-Command Apply-RepositoryUpdate).ScriptBlock
+    function Apply-RepositoryUpdate {
+        param($Prepared)
+        if($Prepared.Plan.Path -ceq $script:ReservationPath){
+            if(Test-Path -LiteralPath (Join-Path $Prepared.Plan.Path 'local-update-state.json')){throw 'Completed B marker survived into C live mutation'}
+            $script:ReservationObserved++
+        }
+        & $script:ApplyBeforeMarkerTest $Prepared
+    }
+    $rows=@(Start-AutomaticFolderUpdate (Join-Path $root 'marker-B-to-C-state'))
+    if($rows[0].status -ne 'updated' -or $script:ReservationObserved -ne 1){throw 'Actual promotion failed marker-before-mutation gate'}
+    $reserved=@(Get-ChildItem -LiteralPath $spec.Path -Filter '.local-update-state.*.tmp' -File)
+    if($reserved.Count -ne 1 -or [Convert]::ToBase64String([IO.File]::ReadAllBytes($reserved[0].FullName)) -cne [Convert]::ToBase64String($bytesB)){throw 'Exact reserved B bytes were not preserved'}
+    if((Get-Content -LiteralPath $markerPath -Raw|ConvertFrom-Json).commit -cne $targetC){throw 'C completion marker not published last'}
+    $script:AutomaticPassed++
+
+    # Recognizable but foreign/stale metadata is preserved, not overwritten or renamed.
+    $hooks=Initialize-UpdateGit @($spec)
+    $current=Read-AutomaticCandidate $spec
+    $foreign='{"schemaVersion":1,"commit":"'+('f'*40)+'","releaseVersion":"3.0.0"}'
+    [IO.File]::WriteAllText($markerPath,$foreign,[Text.UTF8Encoding]::new($false))
+    Automatic-Refusal {Reserve-CompletionMarker $current} 'does not belong to current checkout'
+    if([IO.File]::ReadAllText($markerPath) -cne $foreign){throw 'Foreign marker changed'}
+    [IO.Directory]::Delete($hooks,$false)
+
+    # A clean bootstrap has no local marker, but must reject a reserved marker tracked by target.
+    $spec=New-AutomaticFixture 'automatic-target-tracks-marker';$hooks=Initialize-UpdateGit @($spec)
+    $base=Read-GitValue $spec.Path @('rev-parse','HEAD');$target=$script:ObservedMaster
+    $null=Git-Test $spec.Path @('checkout','-B','master',$target)
+    Set-Content -LiteralPath (Join-Path $spec.Path 'local-update-state.json') -Value 'foreign tracked marker'
+    $null=Git-Test $spec.Path @('add','-f','local-update-state.json')
+    $null=Git-Test $spec.Path @('commit','-m','synthetic forbidden tracked marker')
+    $script:ObservedMaster=Read-GitValue $spec.Path @('rev-parse','HEAD')
+    $null=Git-Test $spec.Path @('checkout','-B','master',$base)
+    if(Test-Path -LiteralPath (Join-Path $spec.Path 'local-update-state.json')){throw 'Bootstrap fixture is not empty'}
+    Automatic-Refusal {Read-AutomaticCandidate $spec} 'Selected target tracks reserved completion marker'
+    if((Read-GitValue $spec.Path @('rev-parse','HEAD')) -cne $base){throw 'Tracked-marker refusal mutated live checkout'}
+    [IO.Directory]::Delete($hooks,$false)
+
     # Read the actual installer specification only; never invoke installation cmdlets.
     . "$PSScriptRoot\..\scripts\install-automatic-updater.ps1" -DefineOnly
     $taskSpec=Get-UpdaterTaskSpecification (Join-Path $root 'not-installed')
@@ -104,6 +159,7 @@ try {
     }
     if(Test-Path -LiteralPath $taskSpec.Root){throw 'Task specification created install directory'}
     $script:AutomaticPassed++
+    . "$PSScriptRoot\installer.test.ps1"
     Write-Host "PASS $script:AutomaticPassed automatic promotion cases plus19 existing folder safety cases; no network/browser/task installation."
     Write-Host "Retained fixtures: $root"
 } catch {Write-Error $_ -ErrorAction Continue;Write-Host $_.ScriptStackTrace;Write-Host "Retained failed fixtures: $root";exit 1}

@@ -1,7 +1,65 @@
 [CmdletBinding()]
 param([string]$ReviewedCommit,[switch]$DefineOnly)
 $runInstaller=-not $DefineOnly
-. "$PSScriptRoot\automatic-folder-updater.ps1" -DefineOnly
+
+function Get-InstallerSourceRoot { Split-Path $PSScriptRoot -Parent }
+
+function Read-ReviewedGitBlob {
+    param([string]$Git,[string]$Root,[string]$Commit,[string]$Name)
+    if($Root.Contains('"')){throw 'Unsafe source path.'}
+    $start=[Diagnostics.ProcessStartInfo]::new()
+    $start.FileName=$Git
+    $start.Arguments='--no-replace-objects -c core.fsmonitor=false -C "'+$Root.TrimEnd('\')+'" cat-file blob '+$Commit+':scripts/'+$Name
+    $start.UseShellExecute=$false;$start.CreateNoWindow=$true;$start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
+    $process=[Diagnostics.Process]::new();$process.StartInfo=$start
+    $memory=[IO.MemoryStream]::new()
+    try{
+        $null=$process.Start()
+        $copy=$process.StandardOutput.BaseStream.CopyToAsync($memory)
+        $errorRead=$process.StandardError.ReadToEndAsync()
+        if(-not $process.WaitForExit(10000)){$process.Kill();throw 'Reviewed blob read timed out.'}
+        $null=$copy.GetAwaiter().GetResult();$null=$errorRead.GetAwaiter().GetResult()
+        if($process.ExitCode -ne 0 -or $memory.Length -gt 1048576){throw 'Reviewed blob missing/oversized.'}
+        return ,$memory.ToArray()
+    }finally{$memory.Dispose();$process.Dispose()}
+}
+
+function Verify-ReviewedUpdaterSource {
+    param([string]$Root,[string]$Commit)
+    if($Commit -cnotmatch '^[0-9a-f]{40}$'){throw 'Supply the exact independently reviewed helper source commit.'}
+    $git=(Get-Command git.exe -CommandType Application -ErrorAction Stop|Select-Object -First 1).Source
+    $options=@('--no-replace-objects','-c','core.fsmonitor=false')
+    $filters=@(& $git @options -C $Root config --name-only --get-regexp '^filter\..*\.(smudge|process|clean|required)$')
+    if($LASTEXITCODE -notin 0,1){throw 'Source filter configuration could not be inspected.'}
+    foreach($filter in $filters){$value=if($filter.EndsWith('.required')){'false'}else{''};$options+=@('-c',($filter+'='+$value))}
+    $head=@(& $git @options -C $Root rev-parse HEAD)
+    if($LASTEXITCODE -or $head.Count -ne 1 -or $head[0] -cne $Commit){throw 'Installer source HEAD differs from reviewed commit.'}
+    $flags=@(& $git @options -C $Root ls-files -v)
+    if($LASTEXITCODE -or @($flags|Where-Object{$_ -cmatch '^[a-zS] '}).Count){throw 'Installer source has hidden index flags; no helpers imported or copied.'}
+    $dirty=@(& $git @options -C $Root status --porcelain=v1 --untracked-files=all)
+    if($LASTEXITCODE -or $dirty.Count){throw 'Installer source is not clean; no helpers imported or copied.'}
+    Read-VerifiedUpdaterFiles $git $Root $Commit
+}
+
+function Read-VerifiedUpdaterFiles {
+    param([string]$Git,[string]$Root,[string]$Commit)
+    $verified=@()
+    $algorithm=[Security.Cryptography.SHA256]::Create()
+    try{
+        foreach($name in @('install-automatic-updater.ps1','update-loaded-folders.ps1','automatic-folder-updater.ps1')){
+            $path=Join-Path $Root ('scripts\'+$name)
+            $file=Get-Item -LiteralPath $path
+            if($file.PSIsContainer -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $file.Length -gt 1048576){throw 'Nonordinary helper source; refuse installation.'}
+            $blob=Read-ReviewedGitBlob $git $Root $Commit $name
+            $local=[IO.File]::ReadAllBytes($path)
+            $expected=[BitConverter]::ToString($algorithm.ComputeHash($blob)).Replace('-','').ToLowerInvariant()
+            $observed=[BitConverter]::ToString($algorithm.ComputeHash($local)).Replace('-','').ToLowerInvariant()
+            if($local.Length -ne $blob.Length -or $observed -cne $expected){throw 'Helper disk bytes differ from exact reviewed Git blob; no helpers imported or copied. Use an exact-byte source checkout, not normalization.'}
+            $verified += [pscustomobject]@{Name=$name;Bytes=$blob;Sha256=$expected}
+        }
+    }finally{$algorithm.Dispose()}
+    return $verified
+}
 
 function Get-UpdaterTaskSpecification {
     param([string]$Root=(Join-Path $env:LOCALAPPDATA 'OwnerExtensionUpdater'))
@@ -21,13 +79,8 @@ function Get-UpdaterTaskSpecification {
 
 function Install-OwnerAutomaticUpdater {
     param([string]$ApprovedSourceCommit)
-    if($ApprovedSourceCommit -cnotmatch '^[0-9a-f]{40}$'){throw 'Supply the exact independently reviewed helper source commit.'}
-    $sourceRoot=Split-Path $PSScriptRoot -Parent
-    $git=(Get-Command git.exe -CommandType Application -ErrorAction Stop|Select-Object -First 1).Source
-    $head=@(& $git --no-replace-objects -c core.fsmonitor=false -C $sourceRoot rev-parse HEAD)
-    if($LASTEXITCODE -or $head.Count -ne 1 -or $head[0] -cne $ApprovedSourceCommit){throw 'Installer source HEAD differs from reviewed commit.'}
-    $dirty=@(& $git --no-replace-objects -c core.fsmonitor=false -C $sourceRoot status --porcelain=v1 --untracked-files=all)
-    if($LASTEXITCODE -or $dirty.Count){throw 'Installer source is not clean; preserve changes and stop.'}
+    $sourceRoot=Get-InstallerSourceRoot
+    $verified=@(Verify-ReviewedUpdaterSource $sourceRoot $ApprovedSourceCommit)
     $null=Get-Command gh.exe -CommandType Application -ErrorAction Stop
     $spec=Get-UpdaterTaskSpecification
     if(Get-ScheduledTask -TaskName $spec.Name -ErrorAction SilentlyContinue){throw 'Task name already exists; no overwrite attempted.'}
@@ -37,11 +90,11 @@ function Install-OwnerAutomaticUpdater {
     }else{$null=New-Item -ItemType Directory -Path $spec.Root}
     $files=@()
     foreach($name in @('update-loaded-folders.ps1','automatic-folder-updater.ps1')){
-        $source=Join-Path $PSScriptRoot $name;$destination=Join-Path $spec.Root $name
-        [IO.File]::Copy($source,$destination,$false)
-        $hash=(Get-FileHash -Algorithm SHA256 -LiteralPath $source).Hash
-        if((Get-FileHash -Algorithm SHA256 -LiteralPath $destination).Hash -cne $hash){throw 'Installed script readback mismatch; task not registered.'}
-        $files += [pscustomobject]@{name=$name;sha256=$hash.ToLowerInvariant()}
+        $file=@($verified|Where-Object{$_.Name -ceq $name})[0];$destination=Join-Path $spec.Root $name
+        $stream=[IO.File]::Open($destination,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+        try{$stream.Write($file.Bytes,0,$file.Bytes.Length);$stream.Flush($true)}finally{$stream.Dispose()}
+        if((Get-FileHash -Algorithm SHA256 -LiteralPath $destination).Hash.ToLowerInvariant() -cne $file.Sha256){throw 'Installed script readback mismatch; task not registered.'}
+        $files += [pscustomobject]@{name=$name;sha256=$file.Sha256}
     }
     $action=New-ScheduledTaskAction -Execute $spec.Execute -Argument $spec.Arguments -WorkingDirectory $spec.Root
     $repeat=New-ScheduledTaskTrigger -Once -At ((Get-Date).AddMinutes(1)) -RepetitionInterval (New-TimeSpan -Minutes $spec.IntervalMinutes)
