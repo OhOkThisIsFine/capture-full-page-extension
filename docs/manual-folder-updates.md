@@ -22,6 +22,9 @@ all local edits/untracked files and Git operations. It refuses changed remote ma
 history, manifest identity-key changes, submodules and checkout filter/encoding attributes. Both candidates are preflighted before
 either tree changes. A subsequent failure can leave the first repo successfully updated: there is no
 automatic rollback. Stop other editors/Git operations during the short run; it is not a filesystem lock.
+Every Git call uses `--no-replace-objects`, so local replacement refs cannot substitute the pinned
+commit's graph, manifest or checkout; existing replacement refs are preserved.
+Inherited `branch.master.mergeOptions` is cleared per command, and merges explicitly disable squash.
 Only fast-forward merges are allowed. Nothing resets, stashes, cleans, forces, builds, tests or installs
 repository code. Hooks, filters, fsmonitor and automatic maintenance are disabled per Git command.
 Existing ignored files and extension storage are not deleted; conflicting ignored/untracked files cause

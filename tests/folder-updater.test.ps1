@@ -10,14 +10,29 @@ $script:GitOptions = @('-c', "core.hooksPath=$hooks", '-c', 'core.fsmonitor=fals
 $script:RealGit = (Get-Command Invoke-RepoGit).ScriptBlock
 $script:ObservedMaster = ''
 $script:FetchHeadOverride = ''
+$script:ObservedMasters = @{}
+$script:VerifyProductionOptions = $false
+$script:ProductionMergeCalls = 0
 $script:Passed = 0
 function Invoke-RepoGit {
     param([string]$Path, [string[]]$GitArguments, [switch]$AllowOne)
+    if ($script:VerifyProductionOptions) {
+        foreach ($option in @('core.fsmonitor=false', 'branch.master.mergeOptions=', 'merge.autoStash=false', 'gc.auto=0', 'maintenance.auto=false', 'protocol.allow=never', 'protocol.https.allow=always')) {
+            if ($script:GitOptions -notcontains $option) { throw "Missing production Git option: $option" }
+        }
+        $hookOption = @($script:GitOptions | Where-Object { $_ -like 'core.hooksPath=*' })
+        if ($hookOption.Count -ne 1 -or @(Get-ChildItem -LiteralPath $hookOption[0].Substring('core.hooksPath='.Length) -Force).Count) { throw 'Production hook directory is not empty' }
+        if ($GitArguments[0] -eq 'merge') {
+            if ($GitArguments -notcontains '--no-squash' -or $GitArguments -notcontains '--ff-only' -or $GitArguments -notcontains '--no-overwrite-ignore') { throw 'Missing production merge safety flags' }
+            $script:ProductionMergeCalls++
+        }
+    }
+    $observed = if ($script:ObservedMasters.ContainsKey($Path)) { $script:ObservedMasters[$Path] } else { $script:ObservedMaster }
     if ($GitArguments[0] -eq 'ls-remote') {
-        return [pscustomobject]@{ Code = 0; Lines = @($script:ObservedMaster + "`trefs/heads/master") }
+        return [pscustomobject]@{ Code = 0; Lines = @($observed + "`trefs/heads/master") }
     }
     if ($GitArguments[0] -eq 'fetch') {
-        $fetched = if ($script:FetchHeadOverride) { $script:FetchHeadOverride } else { $script:ObservedMaster }
+        $fetched = if ($script:FetchHeadOverride) { $script:FetchHeadOverride } else { $observed }
         return & $script:RealGit $Path @('update-ref', 'refs/remotes/origin/master', $fetched)
     }
     & $script:RealGit $Path $GitArguments -AllowOne:$AllowOne
@@ -163,6 +178,65 @@ try {
     $script:ObservedMaster = $plan.Commit
     $null = Git-Test $plan.Path @('checkout', '-B', 'master', $base)
     Expect-Refusal { Prepare-RepositoryUpdate $plan } 'Manifest identity key changed'
+
+    $plan = New-Fixture 'replacement-object'
+    $base = Read-GitValue $plan.Path @('rev-parse', 'HEAD')
+    $null = Git-Test $plan.Path @('checkout', '-b', 'synthetic-replacement', $base)
+    Set-Content -LiteralPath (Join-Path $plan.Path 'manifest.json') -Value '{"version":"99.0.0"}'
+    $null = Git-Test $plan.Path @('commit', '-am', 'synthetic substituted object')
+    $replacement = @(Git-Test $plan.Path @('rev-parse', 'HEAD'))[0]
+    $null = Git-Test $plan.Path @('checkout', 'master')
+    $null = Git-Test $plan.Path @('replace', $plan.Commit, $replacement)
+    # Demonstrate substitution is active for ordinary Git; this read executes no repository code.
+    $substituted = @(& $script:GitExecutable @script:GitOptions -C $plan.Path show ($plan.Commit + ':manifest.json'))
+    if ($LASTEXITCODE -or (($substituted -join "`n" | ConvertFrom-Json).version -ne '99.0.0')) { throw 'Replacement attack fixture is not active' }
+    $prepared = Prepare-RepositoryUpdate $plan
+    if ($prepared.Version -ne '2.0.0') { throw 'Pinned manifest was substituted by replacement ref' }
+    Apply-RepositoryUpdate $prepared
+    if ((Get-Content -LiteralPath (Join-Path $plan.Path 'manifest.json') -Raw | ConvertFrom-Json).version -ne '2.0.0') {
+        throw 'Pinned checkout was substituted by replacement ref'
+    }
+    if ((Read-GitValue $plan.Path @('rev-parse', 'HEAD')) -ne $plan.Commit) { throw 'Replacement changed pinned HEAD' }
+    if ((Read-GitValue $plan.Path @('rev-parse', ('refs/replace/' + $plan.Commit))) -ne $replacement) { throw 'Existing replacement ref was modified' }
+    $script:Passed++
+    # Establish the inherited-config failure with actual Git in a separate disposable repo.
+    $plan = New-Fixture 'inherited-squash-demonstration'
+    $before = Read-GitValue $plan.Path @('rev-parse', 'HEAD')
+    $null = Git-Test $plan.Path @('config', 'branch.master.mergeOptions', '--squash')
+    $null = Git-Test $plan.Path @('merge', '--ff-only', '--no-edit', '--no-autostash', $plan.Commit)
+    if ((Read-GitValue $plan.Path @('rev-parse', 'HEAD')) -ne $before -or
+        (Invoke-RepoGit $plan.Path @('status', '--porcelain=v1')).Lines.Count -eq 0) { throw 'Inherited squash fixture did not demonstrate unchanged HEAD and dirty index' }
+
+    $first = New-Fixture 'production-start-capture'
+    $base = Read-GitValue $first.Path @('rev-parse', 'HEAD')
+    $null = Git-Test $first.Path @('checkout', '-b', 'synthetic-replacement', $base)
+    Set-Content -LiteralPath (Join-Path $first.Path 'manifest.json') -Value '{"version":"99.0.0"}'
+    $null = Git-Test $first.Path @('commit', '-am', 'synthetic Start replacement')
+    $replacement = @(Git-Test $first.Path @('rev-parse', 'HEAD'))[0]
+    $null = Git-Test $first.Path @('checkout', 'master')
+    $null = Git-Test $first.Path @('replace', $first.Commit, $replacement)
+    $second = New-Fixture 'production-start-reddit'
+    $second.Origin = 'https://github.com/OhOkThisIsFine/reddit-autoblocker.git'
+    $null = Git-Test $second.Path @('config', 'remote.origin.url', $second.Origin)
+    $script:StartPlans = @($first, $second)
+    function Get-LoadedRepositoryPlans { $script:StartPlans }
+    foreach ($candidate in $script:StartPlans) {
+        $script:ObservedMasters[$candidate.Path] = $candidate.Commit
+        $null = Git-Test $candidate.Path @('config', 'branch.master.mergeOptions', '--squash')
+        [IO.File]::WriteAllText((Join-Path $candidate.Path '.git\hooks\post-merge'), "#!/bin/sh`ntouch hook-ran`n")
+    }
+    $script:VerifyProductionOptions = $true
+    Start-FolderUpdate
+    $script:VerifyProductionOptions = $false # Start has already removed its empty temporary hooks directory.
+    foreach ($candidate in $script:StartPlans) {
+        if ((Read-GitValue $candidate.Path @('rev-parse', 'HEAD')) -ne $candidate.Commit) { throw 'Production Start did not fast-forward' }
+        if ((Invoke-RepoGit $candidate.Path @('status', '--porcelain=v1')).Lines.Count) { throw 'Production Start dirtied the repository' }
+        if ((Get-Content -LiteralPath (Join-Path $candidate.Path 'manifest.json') -Raw | ConvertFrom-Json).version -ne '2.0.0') { throw 'Production Start installed substituted tree' }
+        if (Test-Path -LiteralPath (Join-Path $candidate.Path 'hook-ran')) { throw 'Production Start executed hook' }
+        if ((Read-GitValue $candidate.Path @('config', '--local', '--get', 'branch.master.mergeOptions')) -ne '--squash') { throw 'Persistent merge config changed' }
+    }
+    if ($script:ProductionMergeCalls -ne 2) { throw 'Actual Start merge route was not exercised for both repos' }
+    $script:Passed++
     Write-Host "PASS $script:Passed safety cases; real disposable Git, synthetic fetch/master; no network/browser."
     Write-Host "Retained synthetic fixtures: $root"
 } catch { Write-Error $_ -ErrorAction Continue; Write-Host "Retained failed fixtures: $root"; exit 1 }

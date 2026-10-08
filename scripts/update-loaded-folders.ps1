@@ -13,7 +13,7 @@ function Invoke-RepoGit {
     $previousPreference = $ErrorActionPreference
     try {
         $ErrorActionPreference = 'Continue'
-        $output = @(& $script:GitExecutable @script:GitOptions -C $Path @GitArguments 2>&1)
+        $output = @(& $script:GitExecutable --no-replace-objects @script:GitOptions -C $Path @GitArguments 2>&1)
         $code = $LASTEXITCODE
     } finally { $ErrorActionPreference = $previousPreference }
     if ($code -ne 0 -and -not ($AllowOne -and $code -eq 1)) {
@@ -91,13 +91,21 @@ function Apply-RepositoryUpdate {
     if ((Read-GitValue $plan.Path @('rev-parse', 'HEAD')) -cne $Prepared.Before) { throw 'Checkout changed after preflight.' }
     if ((Read-GitValue $plan.Path @('rev-parse', 'refs/remotes/origin/master')) -cne $plan.Commit) { throw 'Tracking ref changed after preflight.' }
     if ($Prepared.Before -cne $plan.Commit) {
-        $null = Invoke-RepoGit $plan.Path @('merge', '--ff-only', '--no-edit', '--no-autostash', '--no-overwrite-ignore', $plan.Commit)
+        $null = Invoke-RepoGit $plan.Path @('merge', '--ff-only', '--no-squash', '--no-edit', '--no-autostash', '--no-overwrite-ignore', $plan.Commit)
     }
     if ((Read-GitValue $plan.Path @('rev-parse', 'HEAD')) -cne $plan.Commit) { throw 'Final HEAD mismatch.' }
     Assert-CleanRepository $plan
     $version = (Get-Content -LiteralPath (Join-Path $plan.Path 'manifest.json') -Raw | ConvertFrom-Json).version
     if ($version -cne $Prepared.Version) { throw 'Manifest version mismatch.' }
     Write-Host "$($plan.Name): $version on disk, HEAD $($plan.Commit)."
+}
+
+function Get-LoadedRepositoryPlans {
+    # Internal seam for disposable tests; the user-facing script exposes no folder override.
+    @(
+        [pscustomobject]@{ Name = 'Capture Full Page'; Path = 'C:\Code\capture-full-page-extension'; Origin = 'https://github.com/OhOkThisIsFine/capture-full-page-extension.git'; Commit = $CaptureCommit },
+        [pscustomobject]@{ Name = 'Reddit Keyword Auto-Blocker'; Path = 'C:\Code\reddit-autoblocker'; Origin = 'https://github.com/OhOkThisIsFine/reddit-autoblocker.git'; Commit = $RedditCommit }
+    )
 }
 
 function Start-FolderUpdate {
@@ -107,12 +115,9 @@ function Start-FolderUpdate {
     try {
         # Per-command overrides only. Remote hooks, checkout filters, fsmonitor and maintenance cannot run.
         $script:GitOptions = @('-c', "core.hooksPath=$hooks", '-c', 'core.fsmonitor=false', '-c', 'submodule.recurse=false',
-            '-c', 'fetch.recurseSubmodules=false', '-c', 'merge.autoStash=false', '-c', 'gc.auto=0', '-c', 'maintenance.auto=false',
+            '-c', 'fetch.recurseSubmodules=false', '-c', 'merge.autoStash=false', '-c', 'branch.master.mergeOptions=', '-c', 'gc.auto=0', '-c', 'maintenance.auto=false',
             '-c', 'protocol.allow=never', '-c', 'protocol.https.allow=always')
-        $plans = @(
-            [pscustomobject]@{ Name = 'Capture Full Page'; Path = 'C:\Code\capture-full-page-extension'; Origin = 'https://github.com/OhOkThisIsFine/capture-full-page-extension.git'; Commit = $CaptureCommit },
-            [pscustomobject]@{ Name = 'Reddit Keyword Auto-Blocker'; Path = 'C:\Code\reddit-autoblocker'; Origin = 'https://github.com/OhOkThisIsFine/reddit-autoblocker.git'; Commit = $RedditCommit }
-        )
+        $plans = @(Get-LoadedRepositoryPlans)
         foreach ($plan in $plans) {
             $directory = Get-Item -LiteralPath $plan.Path -ErrorAction Stop
             if (-not $directory.PSIsContainer -or ($directory.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Expected an ordinary repository directory.' }

@@ -51,7 +51,7 @@ powershell.exe -NoProfile -File tests\folder-updater.test.ps1
 git diff --check
 ```
 
-**Passed 17 safety cases**, real disposable synthetic Git histories with remote observations/fetch
+Historical initial component: **passed 17 safety cases**, real disposable synthetic Git histories with remote observations/fetch
 explicitly replaced; no network or browser. Cases cover actual fast-forward/version, disabled real
 post-merge hook, preserved dirty/untracked files, divergence, raw and rewritten origin mismatch,
 stale pin, remote drift during fetch, in-progress Git operation, wrong branch, invalid pin,
@@ -65,3 +65,35 @@ Earlier synthetic experiments failed because multiple Git PATH matches were comb
 fixture was not clean; executable selection and fixture setup were corrected. The final assertions
 remain intact. Product source files were not modified by this helper branch; product/native tests
 were not rerun for this tooling-only change. Browser activation/functionality is not run.
+
+## Independent review repairs
+
+Every helper Git invocation now uses `--no-replace-objects`, including graph, tree, manifest and
+checkout operations. Existing replacement refs are preserved. Production Git options clear
+`branch.master.mergeOptions` per command; merge additionally specifies `--no-squash`.
+
+Final exact updated source: **19 safety cases passed**, same command above, no network/browser.
+The new real Git fixture substitutes a pinned commit with an acyclic same-parent commit whose
+manifest is99.0.0; ordinary Git proves substitution active. The helper still verifies/checks out
+the original2.0.0 tree and exact pinned HEAD, leaving the replacement ref intact. The suite also
+demonstrates actual inherited `--squash` writing/staging files without changing HEAD in a separate
+disposable fixture. It then exercises actual `Start-FolderUpdate`, substituting only the internal
+two-repository plan provider and remote observations/fetch with synthetic fixtures. All production
+Git option construction, filter enumeration, temporary empty hooks lifecycle, manifest verification
+and both actual merges run. Both clean final HEADs/versions are correct despite squash/replacement
+settings; persistent local merge configuration remains unchanged.
+
+Final log `integration-evidence/folder-updater-review-fixes-tests.log`, SHA256
+`fe85df0bba44e6913adc41539be94d6856a2aa026bd935a9d20867a9272e40b7`.
+Final fixture root `C:\Users\ethan\AppData\Local\Temp\folder-updater-test-f3bae0b6c5544359a1fbad2ab2fa4a42`.
+Two exact test-file controls reintroduce the defects in retained task-owned copies: omitted
+replacement flag fails with "Pinned manifest was substituted by replacement ref"; omitted production
+merge-options clearing fails with "Missing production Git option: branch.master.mergeOptions=".
+Both controls exit1 as expected; actual source remains green. Earlier test-only lifecycle observation
+ran after its temporary hooks directory had been removed, and a persistent-config check initially
+read the intentional per-command override. Test observation was restricted to the active lifecycle
+and Git `config --local --get` now verifies persistent configuration; assertions were retained.
+
+The owner subsequently approved a scheduled closed-Brave updater. This manual component has not
+been installed and does not itself satisfy fully automatic updating. Scheduling/activation require
+a separately reviewed implementation that addresses launch-during-write, not just a process check.
