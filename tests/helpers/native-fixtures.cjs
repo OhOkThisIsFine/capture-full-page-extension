@@ -125,6 +125,7 @@ function fixtures({ preserveVirtualizer = false } = {}) {
       ...f,
       ...(f.id === "nested-static-shell"
         ? {
+            viewportConstraints: Object.freeze({ width: 2048, maxHeight: 320 }),
             initialGeometry: { width: 2048, height: 320 },
             expandedGeometry: { width: 2048, height: 1088 },
           }
@@ -148,7 +149,7 @@ function routes(list) {
   map.set(
     "/",
     Buffer.from(
-      `<!doctype html><title>CFP isolated native QA</title><h1>Manual native capture fixtures</h1><p>This is a new task-owned profile. Load only the verified candidate through ordinary browser UI. Record genuine gestures, native Downloads preference and extension ID/version; stop at a persistent permission prompt. Write reviewer evidence in the owned run directory. No check passes from opening this page.</p><p id="viewport"></p><script>function show(){document.querySelector("#viewport").textContent="Observed index viewport: "+innerWidth+" � "+innerHeight+" CSS px; DPR "+devicePixelRatio+". Resize through ordinary UI before loading a fixture; width must not exceed fixture width and height must not exceed fixture height.";}addEventListener("resize",show);show();</script><ul>${list.map((f) => `<li><a href="${f.route}">${f.title}</a></li>`).join("")}</ul>`,
+      `<!doctype html><title>CFP isolated native QA</title><h1>Manual native capture fixtures</h1><p>This is a new task-owned profile. Load only the verified candidate through ordinary browser UI. Record genuine gestures, native Downloads preference and extension ID/version; stop at a persistent permission prompt. Write reviewer evidence in the owned run directory. No check passes from opening this page.</p><p id="viewport"></p><script>function show(){document.querySelector("#viewport").textContent="Observed index viewport: "+innerWidth+" x "+innerHeight+" CSS px; DPR "+devicePixelRatio+". Resize through ordinary UI before loading a fixture; width must not exceed fixture width and height must not exceed fixture height.";}addEventListener("resize",show);show();</script><ul>${list.map((f) => `<li><a href="${f.route}">${f.title}</a>${f.viewportConstraints ? " — measured CSS viewport width2048, height1..320" : ""}</li>`).join("")}</ul>`,
     ),
   );
   return map;
@@ -178,6 +179,21 @@ function filenamePattern(fixture) {
   return new RegExp(
     `^\\d{4}-\\d{2}-\\d{2}_\\d{2}-\\d{2}-\\d{2}_127\\.0\\.0\\.1_CFP QA ${fixture.id}(?:[ -]?\\([0-9]{1,6}\\)|-[0-9]{1,6})?\\.png$`,
   );
+}
+function verifyViewportSetup(fixture, viewport) {
+  Q.record(viewport, ["width", "height"]);
+  const limits = fixture.viewportConstraints;
+  Q.requireThat(
+    fixture.id === "nested-static-shell" &&
+      limits &&
+      Number.isInteger(viewport.width) &&
+      viewport.width === limits.width &&
+      Number.isInteger(viewport.height) &&
+      viewport.height > 0 &&
+      viewport.height <= limits.maxHeight,
+    "Nested shell requires observed CSS viewport width2048 and height1..320",
+  );
+  return { ...viewport };
 }
 function verifyPixels(png, fixture) {
   Q.requireThat(
@@ -285,4 +301,5 @@ module.exports = {
   handleRequest,
   filenamePattern,
   verifyPixels,
+  verifyViewportSetup,
 };

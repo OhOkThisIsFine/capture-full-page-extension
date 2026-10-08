@@ -704,12 +704,14 @@ function validateReviewer(session, raw) {
   Q.record(nestedGeometry, [
     "runId",
     "sourceRoute",
+    "viewport",
     "before",
     "expanded",
     "restored",
     "evidence",
   ]);
   const nestedFixture = s.fixtures.find((f) => f.id === "nested-static-shell");
+  F.verifyViewportSetup(nestedFixture, nestedGeometry.viewport);
   Q.requireThat(
     nestedGeometry.runId === s.runId &&
       nestedGeometry.sourceRoute === "native-page-geometry-observation" &&

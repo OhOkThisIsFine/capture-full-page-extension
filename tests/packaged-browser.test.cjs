@@ -635,12 +635,26 @@ test("synthetic complete run binds exact report bytes and decoded PNGs after eve
       JSON.stringify({
         runId: t.session.runId,
         sourceRoute: "native-page-geometry-observation",
+        viewport: { width: 2048, height: 320 },
         before: { width: 2048, height: 320 },
         expanded: { width: 2048, height: 1088 },
         restored: { width: 2048, height: 320 },
         evidence: [evidence],
       }),
     );
+    const geometryPath = path.join(
+        t.session.evidenceDir,
+        "evidence/nested-static-shell-geometry.json",
+      ),
+      validGeometry = fs.readFileSync(geometryPath),
+      wrongSetup = JSON.parse(validGeometry);
+    wrongSetup.viewport.width = 1024;
+    fs.writeFileSync(geometryPath, JSON.stringify(wrongSetup));
+    assert.throws(
+      () => R.completeRun(t.session, Buffer.from(JSON.stringify(reviewer))),
+      /CSS viewport/,
+    );
+    fs.writeFileSync(geometryPath, validGeometry);
     const validated = R.completeRun(
       t.session,
       Buffer.from(JSON.stringify(reviewer)),
@@ -664,6 +678,10 @@ test("synthetic complete run binds exact report bytes and decoded PNGs after eve
         ),
       ),
     );
+    assert.deepEqual(oracles.nestedGeometryObservation.viewport, {
+      width: 2048,
+      height: 320,
+    });
     assert.deepEqual(oracles.nestedGeometryObservation.expanded, {
       width: 2048,
       height: 1088,
@@ -804,4 +822,28 @@ test("CRC-valid actual PNG seam and edge corruptions preserve all former cell-ce
       assert.throws(() => F.verifyPixels(image, f), /seam/);
     }
   }
+});
+test("nested measured setup rejects narrower wider tall missing or unmeasured CSS viewport before native acceptance", () => {
+  const f = F.fixtures().find((f) => f.id === "nested-static-shell");
+  assert.deepEqual(f.viewportConstraints, { width: 2048, maxHeight: 320 });
+  for (const height of [1, 256, 320])
+    assert.deepEqual(F.verifyViewportSetup(f, { width: 2048, height }), {
+      width: 2048,
+      height,
+    });
+  for (const setup of [
+    { width: 1024, height: 256 },
+    { width: 2043, height: 256 },
+    { width: 2047, height: 256 },
+    { width: 2049, height: 256 },
+    { width: 4096, height: 256 },
+    { width: 2048, height: 321 },
+    { width: 2048, height: 0 },
+    { width: 2048, height: 256.5 },
+    { width: "2048", height: 256 },
+    { height: 256 },
+    { width: 2048, height: 256, source: "expected" },
+    null,
+  ])
+    assert.throws(() => F.verifyViewportSetup(f, setup));
 });

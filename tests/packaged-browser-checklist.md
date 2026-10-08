@@ -122,7 +122,7 @@ fixture cannot qualify either named boundary. Synthetic complete-run tiles use s
 The nested static fixture now starts at natural document320px height and expands to1088px;
 it no longer presets the final height before expansion. A native completion additionally
 requires `evidence/nested-static-shell-geometry.json` with exact `runId`,
-`sourceRoute:'native-page-geometry-observation'`, `before:{width:2048,height:320}`,
+`sourceRoute:'native-page-geometry-observation'`, `viewport:{width:2048,height:320}`, `before:{width:2048,height:320}`,
 `expanded:{width:2048,height:1088}`, `restored:{width:2048,height:320}`, and genuine evidence
 paths. Observe and record these through ordinary native page inspection during the run;
 expected fixture declarations and synthetic PNGs do not prove actual DOM growth/restoration.
@@ -135,8 +135,8 @@ foreign owners, unsafe modes and linked leaf bindings fail before browser launch
 session bus, provider secret or broad environment is inherited. Native GUI connection remains
 unrun in this source-only follow-up.
 
-For the nested shell case, use an observed CSS viewport height <=320px and width <=2048px
+For the nested shell case, use an observed CSS viewport width exactly2048px and integer height1..320px
 before measuring document geometry. The collapsed document then measures320px rather than
-being enlarged to a taller layout viewport; expansion measures1088px. Record the actual viewport
+being enlarged to a taller layout viewport; expansion measures1088px. Measure window.innerWidth/window.innerHeight in CSS pixels through ordinary page inspection; width must equal2048, not merely be below it. Record the actual viewport
 with the pre/post/restored geometry evidence. An expected synthetic declaration is not an
 observed native document measurement.

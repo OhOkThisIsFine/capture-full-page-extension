@@ -236,3 +236,9 @@ owned browser exit/cleanup. Exit 1 means failed/invalid evidence; exit 2 means b
 The final canonical report's exact byte hash is bound in `native-oracles.json`. Failed/unrun
 artifacts remain intact. Post-distribution/signed/provider receipts are rejected here; the shared
 rule table reserves those IDs but this bounded runner/record validator supports pre-submit only.
+
+Nested-shell native geometry evidence now additionally requires exact `viewport:{width:2048,
+height:<observed integer1..320>}` from ordinary page inspection of window.innerWidth/innerHeight.
+The coordinator validates this fixture-specific setup before accepting geometry or output evidence.
+A narrower browser (including1024px) cannot qualify the2048px scroller; the shipping detector is
+unchanged. The runner fixture index also displays the required measured setup.
