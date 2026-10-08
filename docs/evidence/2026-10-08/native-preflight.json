@@ -579,7 +579,7 @@
     "candidateChromeSha256": "e32b101339dd35144a11973b8a572878135d114c18ea2d07558d498acb8b3cd4",
     "viewport": "measured2048x320 CSS px",
     "geometry": "320 ->1088 ->320 CSS document height",
-    "output": "exactlyone saved PNG; width=round(2048*s), height=round(1088*s), predeclare observed devicePixelRatio s before gesture",
+    "output": "Exactlyone saved PNG; compositor floors2048*rX by1088*rY, where rX=native bitmap width/2048 and rY=native bitmap height/320. Record physical owned webview bounds and observed DPR before gesture; do not treat DPR alone as bitmap geometry. At confirmed1.75 axes/3584x560 physical viewport, expected PNG3584x1904.",
     "downloadTimeoutMs": 900000,
     "minimumFinalObservationMs": 15000,
     "cleanup": "ordinary close of owned window; exact owned child exit, retained profile/downloads/evidence; no unrelated processes affected",

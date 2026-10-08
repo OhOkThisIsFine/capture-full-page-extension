@@ -71,8 +71,12 @@ roadmap, but must stay separate from full production qualification.
    this fresh profile if included in the approved scope; do not silently change save-prompt settings.
 4. First case only: `nested-static-shell`, one real toolbar capture. Set and measure exactly2048x320
    CSS viewport through ordinary UI; retain actual viewport, pre-expansion320px document, expanded
-  1088px and restored320px observations. Predeclare observed devicePixelRatio s and expected PNG
-   width=round(2048*s), height=round(1088*s) before the gesture. Independently decode saved pixels,
+  1088px and restored320px observations. Predeclare the measured physical owned webview viewport and observed DPR before the gesture.
+   The shipped compositor uses floor(2048*rX) by floor(1088*rY), where native bitmap rX=width/2048
+   and rY=height/320; DPR alone is not assumed to be bitmap geometry. With confirmed1.75 axes and
+   physical3584x560 viewport, expected PNG is3584x1904. Retain independent physical-window
+   calibration evidence; if that calibration is unavailable, leave exact dimension qualification
+   unverified rather than guessing. Independently decode saved pixels,
    all coordinate markers and complete lower content. This case does not claim8192/adaptive seam,
    worker replacement, private/preserve, Firefox, full RSS envelope or complete checklist coverage.
 5. Observe genuine UI separately from file appearance. Require exactlyone stable owned PNG;
