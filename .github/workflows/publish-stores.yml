@@ -64,6 +64,7 @@ jobs:
 
       - name: Check JavaScript syntax
         run: |
+          node --check capture-protocol.js
           node --check content.js
           node --check service-worker.js
           node --check offscreen.js

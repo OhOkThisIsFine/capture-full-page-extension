@@ -1,0 +1,754 @@
+{
+  "sourceCommit": "0da8512bc743807ab3eba27ee1416e670b17cbd9",
+  "reviewBase": "6ac3ad578850cdbf0a0f67d98f215a22f02dd0fd",
+  "contractSha256": "06597e66420cd27083925ec6a6d4c26aeed787f6c07d44b3813133fb7f716fa2",
+  "sourceArchiveSha256": "491bf46d0599a7eef2bcc76cbaa8eb77cfaa066c8bc06088186eb1a1c48a3e9f",
+  "sourceHashes": {
+    "capture-protocol.js": "507bf5fadc465920d9cecd5efbddc945f8a785339bc04f36b19b54c8a4d3a4a8",
+    "content.js": "c30781516cf3c15a797007c9d04f70e91dbd37a8f060d8b4e5c8310ec91e0199",
+    "offscreen.js": "167a4877d48e6af4f10a7d543c747d31f9d266674536e5353436f5c00fb7f9de",
+    "service-worker.js": "295a7fb11e322e6b5265e5f244b15b8cf505d824d5e3fd62fd673944e88ea823",
+    "popup.js": "e413d00ea93d410107b36ea2154f13052e3f61eef83a656bdc80ffb658d2ce1d",
+    "manifest.json": "44d05d9b15626728dc51071df82eb8d7b579d50b924d126a4bc85d127da82a3e",
+    "manifest.firefox.json": "8557d2d94330b8cd34b7ec67b0690fea5085fb59bfc85e980565f3eeafa7cd96"
+  },
+  "changes": [
+    "Recovery excludes tombstones only when their terminal time is earlier than a later live output creation. Overlapping terminal/live observations and multiple tombstones return explicit uncertain status with null operationId; no invented newest Saved or mixed-clock sorting.",
+    "Every posted non-cleanup page RPC subscribes to the exact operation AbortSignal. Abort settles/rejects that foreground pending entry, clears its phase timer and removes the listener. Disconnect/close/timeout/reply use the same settlement path; late replies cannot revive it.",
+    "Owned cancel acknowledgement remains independently bounded by the original shared two-second cleanup grace before binding close. Acknowledged restoration is retained; timeout/failure remains unverified. Late original replies cannot initiate output or mutate a newer operation.",
+    "Candidate, element, child and text-rectangle footprint work use shared owned DOM task checkpoints. Canonical 256 batch, 50000 discovery/preparation and 12000 frame traversal limits remain. Owned cancel rejects pending yields; temporary text-layout leases and ranges release in actual finally.",
+    "Footprint border geometry is rechecked after yields; mapping and anchor are rechecked before hiding pixels."
+  ],
+  "passed": [
+    {
+      "command": "node --require ../p7-evidence/isolation.cjs --test --test-isolation=none --test-timeout=60000 tests/*.test.cjs",
+      "tests": 130,
+      "passed": 130,
+      "failed": 0,
+      "skipped": 0,
+      "cancelled": 0,
+      "exitCode": 0,
+      "receipt": "review-residuals-full-final-v2.log"
+    },
+    {
+      "command": "node --require ../../p7-evidence/isolation.cjs --test --test-isolation=none --test-timeout=60000 tests/*.test.cjs",
+      "cwd": "integration-evidence/review-residuals-source (exact Git archive used for packages)",
+      "tests": 130,
+      "passed": 130,
+      "failed": 0,
+      "skipped": 0,
+      "cancelled": 0,
+      "exitCode": 0,
+      "receipt": "review-residuals-exact-tests.log"
+    },
+    {
+      "command": "node ../../residual-exact-mutations.cjs",
+      "cwd": "integration-evidence/review-residuals-source",
+      "exitCode": 0,
+      "controls": {
+        "sourceHashes": {
+          "capture-protocol.js": "507bf5fadc465920d9cecd5efbddc945f8a785339bc04f36b19b54c8a4d3a4a8",
+          "content.js": "c30781516cf3c15a797007c9d04f70e91dbd37a8f060d8b4e5c8310ec91e0199",
+          "offscreen.js": "167a4877d48e6af4f10a7d543c747d31f9d266674536e5353436f5c00fb7f9de",
+          "service-worker.js": "295a7fb11e322e6b5265e5f244b15b8cf505d824d5e3fd62fd673944e88ea823",
+          "tests/dispatcher-harness.cjs": "acc4d7021701d6e8629a2c40e84bad11b21d7582af69779e40e66bc75e28bb05",
+          "tests/review-regressions.test.cjs": "cad42a7c8dc9f33fdb37695341ad3eccf482eb01baa0d0a5a11ccfbad433269a"
+        },
+        "productionCheckoutUnchanged": true,
+        "command": "node --require ../p7-evidence/isolation.cjs --test --test-isolation=none --test-timeout=3000 --test-name-pattern=recovery keeps newer|cancel held posted|cancel reaches actual tests/review-regressions.test.cjs",
+        "results": [
+          {
+            "id": "mixed-recovery",
+            "file": "service-worker.js",
+            "anchorSha256": "091abef34229a93a6cc8b25fb0dfd1460d50455383494f5f1847223763df477b",
+            "mutatedSourceSha256": "9e3262d89a75def1cfe741e3e58efbde1721579c8fc375224b1caa58ceaefcf4",
+            "exitCode": 1,
+            "expectedFailure": "recovery keeps newer",
+            "failingTests": [
+              "\u2716 recovery keeps newer capture identity despite reversed native completion order (69.9369ms)",
+              "\u2716 failing tests:",
+              "\u2716 recovery keeps newer capture identity despite reversed native completion order (69.9369ms)"
+            ],
+            "detected": true
+          },
+          {
+            "id": "rpc-abort",
+            "file": "service-worker.js",
+            "anchorSha256": "70f0db1598002fc08546486d2e916da0741d3afdb1113a1806656a757526c012",
+            "mutatedSourceSha256": "f48a3744ed7edb20a5f612e539321c27e55b6208f6b19f2c055eb3a66a099cb0",
+            "exitCode": 1,
+            "expectedFailure": "cancel held posted",
+            "failingTests": [
+              "\u2716 cancel held posted prepare clears foreground lock with acknowledged restoration (6.081ms)",
+              "\u2716 cancel held posted prepare clears foreground lock with timed-out restoration (3.1627ms)",
+              "\u2716 cancel held posted position clears foreground lock with acknowledged restoration (3.1273ms)",
+              "\u2716 cancel held posted position clears foreground lock with timed-out restoration (3.4371ms)",
+              "\u2716 failing tests:",
+              "\u2716 cancel held posted prepare clears foreground lock with acknowledged restoration (6.081ms)",
+              "\u2716 cancel held posted prepare clears foreground lock with timed-out restoration (3.1627ms)",
+              "\u2716 cancel held posted position clears foreground lock with acknowledged restoration (3.1273ms)",
+              "\u2716 cancel held posted position clears foreground lock with timed-out restoration (3.4371ms)"
+            ],
+            "detected": true
+          },
+          {
+            "id": "cleanup-ack",
+            "file": "service-worker.js",
+            "anchorSha256": "e47a0e2aa9ef9c2d6ecd99ac835fcf21462ef6af805ba2035b72dfd80209c27d",
+            "mutatedSourceSha256": "08e1774f9b87df4861c5bf942528f474632219d15ae6d7dd610edf1b2aa024d2",
+            "exitCode": 1,
+            "expectedFailure": "cancel held posted",
+            "failingTests": [
+              "\u2716 cancel held posted prepare clears foreground lock with acknowledged restoration (6.7602ms)",
+              "\u2716 cancel held posted prepare clears foreground lock with timed-out restoration (3.2272ms)",
+              "\u2716 cancel held posted position clears foreground lock with acknowledged restoration (3.4458ms)",
+              "\u2716 cancel held posted position clears foreground lock with timed-out restoration (4.7663ms)",
+              "\u2716 failing tests:",
+              "\u2716 cancel held posted prepare clears foreground lock with acknowledged restoration (6.7602ms)",
+              "\u2716 cancel held posted prepare clears foreground lock with timed-out restoration (3.2272ms)",
+              "\u2716 cancel held posted position clears foreground lock with acknowledged restoration (3.4458ms)",
+              "\u2716 cancel held posted position clears foreground lock with timed-out restoration (4.7663ms)"
+            ],
+            "detected": true
+          },
+          {
+            "id": "phase-yields",
+            "file": "content.js",
+            "anchorSha256": "be89e443ed7b2c578da91221c423bac253e490c36ee37e735fbe1bdb218dd219",
+            "mutatedSourceSha256": "1cecaf5a5de8d8f45162250ecbd924540b99a93992315ac1d50fb437944d6f1e",
+            "exitCode": 1,
+            "expectedFailure": "cancel reaches actual",
+            "failingTests": [
+              "\u2716 cancel reaches actual candidates footprint phase within owned DOM task batch (50.4263ms)",
+              "\u2716 cancel reaches actual children footprint phase within owned DOM task batch (4.0794ms)",
+              "\u2716 cancel reaches actual text-rectangles footprint phase within owned DOM task batch (4.3206ms)",
+              "\u2716 failing tests:",
+              "\u2716 cancel reaches actual candidates footprint phase within owned DOM task batch (50.4263ms)",
+              "\u2716 cancel reaches actual children footprint phase within owned DOM task batch (4.0794ms)",
+              "\u2716 cancel reaches actual text-rectangles footprint phase within owned DOM task batch (4.3206ms)"
+            ],
+            "detected": true
+          },
+          {
+            "id": "text-lease",
+            "file": "content.js",
+            "anchorSha256": "9701a292d49a138f959ecd2742ebb0c2426f129e1be7c279a2517b3f60ddf646",
+            "mutatedSourceSha256": "6401b5d44e2fa6db9a0c354d3802de210f3862ade27f98e50787a0cd036a305d",
+            "exitCode": 1,
+            "expectedFailure": "cancel reaches actual text-rectangles",
+            "failingTests": [
+              "\u2716 cancel reaches actual text-rectangles footprint phase within owned DOM task batch (2.9179ms)",
+              "\u2716 failing tests:",
+              "\u2716 cancel reaches actual text-rectangles footprint phase within owned DOM task batch (2.9179ms)"
+            ],
+            "detected": true
+          }
+        ]
+      },
+      "definitions": "mixed-recovery falsely returns Saved on ambiguous observations; rpc-abort omits AbortSignal listener; cleanup-ack skips awaited ownership acknowledgement; phase-yields disables shared owned task yields; text-lease omits text rectangle release"
+    },
+    {
+      "command": "git ls-files *.js *.cjs; node --check each tracked file",
+      "checked": 26,
+      "failed": [],
+      "exitCode": 0
+    },
+    {
+      "command": "python ../review-residuals-build.py",
+      "exitCode": 0,
+      "scope": "Development/source-only artifacts, fresh owned destination, every package member compared to exact source/extraction; existing archive CRLF conversion explicit, no configuration changed",
+      "packages": {
+        "sourceCommit": "0da8512bc743807ab3eba27ee1416e670b17cbd9",
+        "sourceArchiveSha256": "491bf46d0599a7eef2bcc76cbaa8eb77cfaa066c8bc06088186eb1a1c48a3e9f",
+        "releaseToolchainQualified": false,
+        "installedOrSubmitted": false,
+        "results": [
+          {
+            "target": "chrome",
+            "version": "5.3.0",
+            "archive": "capture-full-page-chrome-5.3.0.zip",
+            "sha256": "c08f33e5340af90f3aab2ab92f231d32a312e26b8ce2be24ac8cd9fa621ef1ec",
+            "bytes": 62794,
+            "members": [
+              "capture-protocol.js",
+              "content.js",
+              "icons/icon128.png",
+              "icons/icon16.png",
+              "icons/icon32.png",
+              "icons/icon48.png",
+              "manifest.json",
+              "offscreen.html",
+              "offscreen.js",
+              "popup.css",
+              "popup.html",
+              "popup.js",
+              "service-worker.js"
+            ],
+            "exactSourceAndExtraction": true
+          },
+          {
+            "target": "firefox",
+            "version": "5.3.0",
+            "archive": "capture-full-page-firefox-5.3.0.zip",
+            "sha256": "88b400ad77eee05d009f7299d1f7431b4b49b098a9541dc7b00595d591fef5dd",
+            "bytes": 62654,
+            "members": [
+              "capture-protocol.js",
+              "content.js",
+              "icons/icon128.png",
+              "icons/icon16.png",
+              "icons/icon32.png",
+              "icons/icon48.png",
+              "manifest.json",
+              "offscreen.js",
+              "popup.css",
+              "popup.html",
+              "popup.js",
+              "service-worker.js"
+            ],
+            "exactSourceAndExtraction": true
+          }
+        ]
+      }
+    }
+  ],
+  "nativeSourceOnly": {
+    "sourceCommit": "0da8512bc743807ab3eba27ee1416e670b17cbd9",
+    "browser": "Chrome154.0.8037.98",
+    "scope": "Production source evaluated from exact extracted Chrome package. Synthetic runtime, loopback-only fixtures and CDP screenshots in fresh task-owned profiles; no extension loaded, native captureVisibleTab, grants, downloads or worker/background qualification. Node external network denied, browser external routes aborted, credential-free child environment; only own profile/process closed.",
+    "runs": [
+      {
+        "name": "restoration",
+        "command": "node --require ./tests/native-source-isolation.cjs tests/browser-restoration.cjs",
+        "exitCode": 0,
+        "error": null
+      },
+      {
+        "name": "png",
+        "command": "node --require ./tests/native-source-isolation.cjs tests/browser-png.cjs",
+        "exitCode": 0,
+        "error": null
+      },
+      {
+        "name": "geometry",
+        "command": "node --require ./tests/native-source-isolation.cjs tests/browser-geometry.cjs",
+        "exitCode": 0,
+        "error": null
+      },
+      {
+        "name": "layout",
+        "command": "node --require ./tests/native-source-isolation.cjs tests/browser-layout.cjs",
+        "exitCode": 0,
+        "error": null
+      }
+    ],
+    "restoration": {
+      "sourceCommit": "0da8512bc743807ab3eba27ee1416e670b17cbd9",
+      "scope": "Isolated native Chrome DOM, production function bodies with test-only internal exposure and controlled settle; no packaged extension, activeTab, captureVisibleTab, native download, worker replacement, Firefox or memory qualification",
+      "checks": [
+        {
+          "id": "entry-owned-scroll-before-native-collapse",
+          "status": "passed",
+          "evidence": {
+            "expanded": 8000,
+            "collapsed": 500,
+            "final": 200,
+            "restored": {
+              "status": "acknowledged",
+              "restoredCount": 8,
+              "preservedPageChanges": 0,
+              "failedCount": 0,
+              "codes": []
+            },
+            "styles": 0,
+            "bodyStyle": ""
+          }
+        },
+        {
+          "id": "entry-page-scroll-preserved",
+          "status": "passed",
+          "evidence": {
+            "expanded": 8000,
+            "collapsed": 300,
+            "final": 300,
+            "restored": {
+              "status": "acknowledged",
+              "restoredCount": 7,
+              "preservedPageChanges": 1,
+              "failedCount": 0,
+              "codes": [
+                "PAGE_SCROLL_CHANGED"
+              ]
+            },
+            "styles": 0,
+            "bodyStyle": ""
+          }
+        },
+        {
+          "id": "native-border-image-outset-marker-stops-before-suppression",
+          "status": "passed",
+          "evidence": {
+            "code": "UNSUPPORTED_OCCLUSION",
+            "hidden": 0,
+            "accepted": 0,
+            "restored": {
+              "status": "acknowledged",
+              "restoredCount": 7,
+              "preservedPageChanges": 0,
+              "failedCount": 0,
+              "codes": []
+            },
+            "opacity": "1",
+            "markerPngSha256": "cf0ac7d1a519d66585719c4529f4c650754bd72aa2aab176ed5b8f936bbad865",
+            "markerDimensions": {
+              "width": 400,
+              "height": 240
+            },
+            "marker": {
+              "x": 100,
+              "y": 195,
+              "rgb": [
+                200,
+                30,
+                40
+              ]
+            }
+          }
+        },
+        {
+          "id": "disabled-auto-preserve-preclassified-zero-page-writes",
+          "status": "passed",
+          "evidence": {
+            "code": "UNSUPPORTED_TARGET_MAPPING",
+            "styleWrites": 0,
+            "attributes": 0,
+            "scrollWrites": 0,
+            "mutations": 0,
+            "originalScroll": 100,
+            "finalScroll": 100,
+            "stateCleared": true,
+            "styles": 0
+          }
+        },
+        {
+          "id": "cancel-held-position-settle-no-late-mutation",
+          "status": "passed",
+          "evidence": {
+            "restored": {
+              "status": "acknowledged",
+              "restoredCount": 7,
+              "preservedPageChanges": 0,
+              "failedCount": 0,
+              "codes": []
+            },
+            "elapsed": 0.19999998807907104,
+            "afterAck": 200,
+            "afterSettle": 200,
+            "settled": {
+              "ok": false,
+              "code": "CANCELLED",
+              "message": "Capture was cancelled."
+            },
+            "stateCleared": true,
+            "styles": 0
+          }
+        },
+        {
+          "id": "css-animation-owned-pause-restored",
+          "status": "passed",
+          "evidence": {
+            "original": "animation-play-state: running;",
+            "during": "paused",
+            "pageStyle": "animation-play-state: running;",
+            "finalStyle": "animation-play-state: running;",
+            "after": "running",
+            "mutated": 0,
+            "restored": {
+              "status": "acknowledged",
+              "restoredCount": 7,
+              "preservedPageChanges": 0,
+              "failedCount": 0,
+              "codes": []
+            },
+            "styles": 0
+          }
+        },
+        {
+          "id": "css-animation-page-style-preservation",
+          "status": "passed",
+          "evidence": {
+            "original": "animation-play-state: running;",
+            "during": "paused",
+            "pageStyle": "animation-play-state: paused !important;",
+            "finalStyle": "animation-play-state: paused !important;",
+            "after": "paused",
+            "mutated": 0,
+            "restored": {
+              "status": "acknowledged",
+              "restoredCount": 7,
+              "preservedPageChanges": 0,
+              "failedCount": 0,
+              "codes": []
+            },
+            "styles": 0
+          }
+        }
+      ],
+      "sourceHashes": {
+        "capture-protocol.js": "507bf5fadc465920d9cecd5efbddc945f8a785339bc04f36b19b54c8a4d3a4a8",
+        "content.js": "c30781516cf3c15a797007c9d04f70e91dbd37a8f060d8b4e5c8310ec91e0199",
+        "offscreen.js": "167a4877d48e6af4f10a7d543c747d31f9d266674536e5353436f5c00fb7f9de"
+      },
+      "browser": "154.0.8037.98"
+    },
+    "pixels": {
+      "scope": "Production content and trusted compositor dispatcher, source evaluation, CDP screenshots in synthetic profile; no extension installation/native captureVisibleTab/downloads.",
+      "bands": [
+        {
+          "height": 100,
+          "width": 400,
+          "outputHeight": 1000,
+          "allRowsVerified": true
+        },
+        {
+          "height": 180,
+          "width": 400,
+          "outputHeight": 1000,
+          "allRowsVerified": true
+        },
+        {
+          "height": 190,
+          "width": 400,
+          "outputHeight": 1000,
+          "allRowsVerified": true
+        },
+        {
+          "height": 191,
+          "width": 400,
+          "outputHeight": 1000,
+          "allRowsVerified": true
+        }
+      ],
+      "browser": "154.0.8037.98",
+      "repeatedCapture": true
+    },
+    "geometry": {
+      "scope": "Native DOM and screenshot source, real trusted compositor/encoder; no installed extension or native downloads",
+      "fixtures": [
+        {
+          "name": "fixed",
+          "frames": 10,
+          "hidden": [
+            0,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "marker": {
+            "x": 20,
+            "y": 120,
+            "rgb": [
+              20,
+              100,
+              200
+            ]
+          },
+          "restoration": {
+            "status": "acknowledged",
+            "restoredCount": 9,
+            "preservedPageChanges": 0,
+            "failedCount": 0,
+            "codes": []
+          }
+        },
+        {
+          "name": "transformed",
+          "frames": 10,
+          "hidden": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "marker": {
+            "x": 20,
+            "y": 910,
+            "rgb": [
+              20,
+              100,
+              200
+            ]
+          },
+          "restoration": {
+            "status": "acknowledged",
+            "restoredCount": 7,
+            "preservedPageChanges": 0,
+            "failedCount": 0,
+            "codes": []
+          }
+        },
+        {
+          "name": "wide",
+          "frames": 15,
+          "hidden": [
+            0,
+            0,
+            0,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "marker": {
+            "x": 700,
+            "y": 120,
+            "rgb": [
+              20,
+              100,
+              200
+            ]
+          },
+          "restoration": {
+            "status": "acknowledged",
+            "restoredCount": 9,
+            "preservedPageChanges": 0,
+            "failedCount": 0,
+            "codes": []
+          }
+        }
+      ],
+      "browser": "154.0.8037.98",
+      "mappingRejections": [
+        "UNSUPPORTED_TARGET_MAPPING",
+        "UNSUPPORTED_TARGET_MAPPING"
+      ],
+      "childRealmRotation": "GEOMETRY_CHANGED"
+    },
+    "layout": {
+      "sourceCommit": "0da8512bc743807ab3eba27ee1416e670b17cbd9",
+      "fixtureHashes": {
+        "originalShell": "3c60edd8427df5c765d3fa2adef157fc9d90228ba7a88d413f0be2e03f665192",
+        "exposedShell": "c2d49891bd72b34ceb111fa2b7e15272965ccf6f342004e5d75c4b5de49cacbe"
+      },
+      "scope": "Source evaluation in isolated synthetic Chrome profile; no extension loaded, no activeTab grant or native downloads.",
+      "bands": [
+        {
+          "height": 100,
+          "count": 94,
+          "scrollY": 37,
+          "targetHeight": 2000,
+          "restored": {
+            "status": "acknowledged",
+            "restoredCount": 7,
+            "preservedPageChanges": 0,
+            "failedCount": 0,
+            "codes": []
+          },
+          "styles": 0
+        },
+        {
+          "height": 149,
+          "count": 60,
+          "scrollY": 37,
+          "targetHeight": 2000,
+          "restored": {
+            "status": "acknowledged",
+            "restoredCount": 7,
+            "preservedPageChanges": 0,
+            "failedCount": 0,
+            "codes": []
+          },
+          "styles": 0
+        },
+        {
+          "height": 150,
+          "count": 58,
+          "scrollY": 37,
+          "targetHeight": 2000,
+          "restored": {
+            "status": "acknowledged",
+            "restoredCount": 7,
+            "preservedPageChanges": 0,
+            "failedCount": 0,
+            "codes": []
+          },
+          "styles": 0
+        },
+        {
+          "height": 151,
+          "count": 58,
+          "scrollY": 37,
+          "targetHeight": 2000,
+          "restored": {
+            "status": "acknowledged",
+            "restoredCount": 7,
+            "preservedPageChanges": 0,
+            "failedCount": 0,
+            "codes": []
+          },
+          "styles": 0
+        },
+        {
+          "height": 180,
+          "count": 48,
+          "scrollY": 37,
+          "targetHeight": 2000,
+          "restored": {
+            "status": "acknowledged",
+            "restoredCount": 7,
+            "preservedPageChanges": 0,
+            "failedCount": 0,
+            "codes": []
+          },
+          "styles": 0
+        },
+        {
+          "height": 190,
+          "count": 44,
+          "scrollY": 37,
+          "targetHeight": 2000,
+          "restored": {
+            "status": "acknowledged",
+            "restoredCount": 7,
+            "preservedPageChanges": 0,
+            "failedCount": 0,
+            "codes": []
+          },
+          "styles": 0
+        },
+        {
+          "height": 191,
+          "count": 44,
+          "scrollY": 37,
+          "targetHeight": 2000,
+          "restored": {
+            "status": "acknowledged",
+            "restoredCount": 7,
+            "preservedPageChanges": 0,
+            "failedCount": 0,
+            "codes": []
+          },
+          "styles": 0
+        },
+        {
+          "height": 300,
+          "count": 28,
+          "scrollY": 37,
+          "targetHeight": 2000,
+          "restored": {
+            "status": "acknowledged",
+            "restoredCount": 7,
+            "preservedPageChanges": 0,
+            "failedCount": 0,
+            "codes": []
+          },
+          "styles": 0
+        }
+      ],
+      "browser": "154.0.8037.98",
+      "opaqueShell": {
+        "code": "UNSUPPORTED_TARGET_MAPPING",
+        "stylesUnchanged": true,
+        "nestedTop": 83,
+        "nestedLeft": 17,
+        "frameTop": 43,
+        "styles": 0
+      },
+      "before-unlock": {
+        "restored": true,
+        "restoration": {
+          "status": "acknowledged",
+          "restoredCount": 3,
+          "preservedPageChanges": 0,
+          "failedCount": 0,
+          "codes": []
+        },
+        "oldResult": {
+          "error": "Capture was cancelled."
+        },
+        "after": 83,
+        "frameAfter": 43,
+        "styles": 0
+      },
+      "after-unlock": {
+        "restored": true,
+        "restoration": {
+          "status": "acknowledged",
+          "restoredCount": 18,
+          "preservedPageChanges": 0,
+          "failedCount": 0,
+          "codes": []
+        },
+        "oldResult": {
+          "error": "Capture was cancelled."
+        },
+        "after": 83,
+        "frameAfter": 43,
+        "styles": 0
+      }
+    },
+    "environment": {
+      "CFP_EXTENSION_ROOT": "integration-evidence/review-residuals-packages/verified-chrome",
+      "CFP_SOURCE_COMMIT": "0da8512bc743807ab3eba27ee1416e670b17cbd9",
+      "CFP_CHROMIUM_EXECUTABLE": "existing signed official Chrome",
+      "PLAYWRIGHT_MODULE": "existing task-owned playwright-core1.56.1",
+      "PNGJS_MODULE": "existing task-owned pngjs7",
+      "CFP_QA_OUTPUT": "unique task-owned run directory",
+      "CFP_QA_REPORT": "unique layout report"
+    }
+  },
+  "failedThenCorrected": [
+    "Focused v1/v2 recovery observation fixture omitted required paused boolean; schema validation rejected native observations. Corrected fixture to exact required schema; Saved/uncertain assertions unchanged.",
+    "Focused v1 direct RPC deadline fixture lacked actual operation AbortController; added real controller to match production scope.",
+    "Focused v3 computed-style wrapper recursively called the harness selected getter; corrected fixture hook, retained all phase cancellation assertions.",
+    "Initial posted-RPC timer assertion inspected function values rather than timer durations; strengthened it to observe actual set/clear IDs and durations before/after AbortSignal.",
+    "Rejected initial insertion-order recovery approach after reviewer clarification: unchanged wire schema does not establish newest-operation authority; explicit uncertainty now tested with actual reversed native completion."
+  ],
+  "notRun": [
+    "Q1/LP1 installed native captureVisibleTab attribution/real gestures",
+    "Q3 actual process-group RSS<=100ms, repeated capture/cancel/30s idle",
+    "Q4-normal actual Chrome/Firefox native download manager and save preference paths",
+    "Q5 native sender/offscreen/background replacement",
+    "Q6 current exact pinned manual finite table",
+    "Firefox native capture/downloads/shared lifecycle",
+    "Q7a locked release toolchain/install activation receipts",
+    "Extension install, merge, deployment and store release"
+  ],
+  "nativeRoute": "native-qualification-route.md: missing runner/validator are concrete local implementation gaps; selected executor currently exposes shell/file/terminal APIs but no general desktop GUI click/screenshot API in this turn. This does not prove absence of human access or GUI capability in another workspace. Establish exact approved runtime and supported GUI or human reviewer on isolated task-owned selected-executor profiles. Do not transfer execution to evade restrictions.",
+  "publication": {
+    "draftPr": "https://github.com/OhOkThisIsFine/capture-full-page-extension/pull/11",
+    "draft": true,
+    "installed": false,
+    "merged": false,
+    "deployed": false,
+    "storeSubmitted": false
+  },
+  "receiptHashes": {
+    "review-residuals-full-final-v2.log": "a133ad2047f001641a2dcaf4ebd1cdb9b5e7682bb0ed05bcb28564f644b825d9",
+    "review-residuals-exact-tests.log": "ac8c33e61e2b67410e28ce8ab6a70ef8b843d6d3c5d77e688158f224ceb063aa",
+    "residual-exact-mutations/results.json": "031cbf365e4ab445eb1e2d096037da8e82ebefec76503831665cc8ef613e1c01",
+    "review-residuals-packages/results.json": "682862a79ab7c696f3dfedbd37cafb0d6d9c585ff4c07c2967b6ee84490dd043",
+    "review-residuals-native/results.json": "adbd7de000d00b54dcfd07b8797e739a3695194cabeccda7885d9c73124ef0df",
+    "residual-syntax.json": "69ecda306ee3b77f93c6038a736edefc98bf5d27d12ca913f0c83d9687cee919"
+  }
+}

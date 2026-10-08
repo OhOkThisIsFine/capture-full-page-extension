@@ -1,6 +1,11 @@
 :root {
   color-scheme: light dark;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family:
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
 }
 
 body {
@@ -53,11 +58,21 @@ button img {
 #status {
   margin: 0;
   max-width: 200px;
-  color: #b3261e;
+  color: CanvasText;
   font-size: 11px;
   line-height: 1.35;
 }
 
 #status:not(:empty) {
   margin-top: 7px;
+}
+
+[hidden] {
+  display: none !important;
+}
+#cancel {
+  margin-top: 8px;
+}
+#status.error {
+  color: #b3261e;
 }

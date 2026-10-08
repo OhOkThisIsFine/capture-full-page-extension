@@ -1,0 +1,95 @@
+{
+  "schemaVersion": 1,
+  "kind": "source-only-qa-harness-evidence",
+  "sourceCommit": "777e2e97d995524a0799d7def90df5d1d6ea0502",
+  "shippingSourceCommit": "0da8512bc743807ab3eba27ee1416e670b17cbd9",
+  "base": "ee790c62eb9b8e1d14587d8921dc8184e59aefc8",
+  "contractSha256": "06597e66420cd27083925ec6a6d4c26aeed787f6c07d44b3813133fb7f716fa2",
+  "tests": {
+    "scope": "Exact Git archive, synthetic state, established network/subprocess isolation guard",
+    "passed": 155,
+    "failed": 0,
+    "skipped": 0,
+    "cancelled": 0,
+    "newHarnessTests": 25,
+    "command": "node --require ../../p7-evidence/isolation.cjs --test --test-isolation=none --test-timeout=15000 tests/*.test.cjs"
+  },
+  "negativeControls": {
+    "kind": "deliberately weakened copies, source tests must exit nonzero",
+    "detected": 5,
+    "controls": [
+      "missing-attribution",
+      "candidate-capability",
+      "png-stream-tail",
+      "native-cleanup",
+      "final-observation"
+    ]
+  },
+  "cli": {
+    "scope": "Explicit synthetic package/inventory/browser metadata; preparation only",
+    "exitCode": 2,
+    "qualification": "blocked",
+    "all36ChecksUnrun": true,
+    "installedObservation": null,
+    "browserObservation": null,
+    "nativeLaunched": false
+  },
+  "shippingPayloadChanged": false,
+  "nativeQualification": "not-run",
+  "mergeDeploymentStoreSubmission": "not-run",
+  "remainingGates": [
+    "Independent source review",
+    "Canonical release inventory/toolchain producer and approved real CI package provenance",
+    "Exact approved OS/browser runtime on the selected executor",
+    "Separately reviewed real GUI gestures, native API/download/pixel/cleanup/RSS evidence",
+    "Parent-coordinated merge and release"
+  ],
+  "failedExperiments": [
+    {
+      "status": "corrected",
+      "action": "Initial focused verifier test",
+      "cause": "action.default_icon intentionally contains 16/32/48 while general icons includes 128; exact shape corrected",
+      "initialPassed": 8,
+      "initialFailed": 1
+    },
+    {
+      "status": "corrected in fresh copies",
+      "action": "First mutation orchestration",
+      "cause": "Native cleanup mutation anchor did not match archive line endings; regex anchor corrected without product/test assertion changes"
+    }
+  ],
+  "receipts": [
+    {
+      "path": "qa-harness-exact-final-tests.log",
+      "sha256": "cbe6e9474d287fd8d770e5dbf46a46ba19c49000b2bb5f837642fcb5cb4bc6df"
+    },
+    {
+      "path": "qa-harness-focused-final.log",
+      "sha256": "e7a2603ae32dd9da2858fd2d1c3dbce6e4b868fad175415d6d64a158db64f06b"
+    },
+    {
+      "path": "qa-harness-positive-completion.log",
+      "sha256": "356141062a54a753cfa812202cf4dd55c2864ec3abaaa49638e69815f7207162"
+    },
+    {
+      "path": "qa-harness-cli-result.json",
+      "sha256": "7ec0cd3ba6d32dbba7df48272263f3952aea474dd811624009fd0414a30374ec"
+    },
+    {
+      "path": "qa-harness-cli-blocked.log",
+      "sha256": "53cef44c935f90c5d0c2962899bd9101cc8ca2fbe549fa1c64081de0b28e069e"
+    },
+    {
+      "path": "qa-harness-controls-final/results.json",
+      "sha256": "e295923eb1d663a78c4524ccc510af03a12eef39dfcdf9d99490756fe983a6c9"
+    },
+    {
+      "path": "qa-contract-initial.log",
+      "sha256": "a8511ac4c1827c5bdc83568ca3a8498fa63992d634510f993d1ee1feaa2b2e85"
+    },
+    {
+      "path": "qa-harness-negative-controls-v2.log",
+      "sha256": "1e2d9ba0b63a4b06f424fde8668321b9919ff285c2e42d898d4e8405beffa734"
+    }
+  ]
+}
