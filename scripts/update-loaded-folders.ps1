@@ -39,6 +39,8 @@ function Assert-CleanRepository {
     if ((Read-GitValue $Plan.Path @('branch', '--show-current')) -cne 'master') { throw 'Expected master branch.' }
     $status = Invoke-RepoGit $Plan.Path @('status', '--porcelain=v1', '--untracked-files=all', '--ignore-submodules=none')
     if ($status.Lines.Count) { throw "Local edits/untracked files: $($Plan.Path). Preserve them; update refused." }
+    $flags=Invoke-RepoGit $Plan.Path @('ls-files','-v')
+    if (@($flags.Lines | Where-Object { $_ -cmatch '^[a-zS] ' }).Count) { throw 'Hidden assume-unchanged/skip-worktree state; update refused.' }
     $gitDirectory = Read-GitValue $Plan.Path @('rev-parse', '--absolute-git-dir')
     foreach ($marker in @('MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'rebase-merge', 'rebase-apply', 'BISECT_LOG', 'index.lock')) {
         if (Test-Path -LiteralPath (Join-Path $gitDirectory $marker)) { throw "Git operation in progress: $marker." }
@@ -108,7 +110,8 @@ function Get-LoadedRepositoryPlans {
     )
 }
 
-function Start-FolderUpdate {
+function Initialize-UpdateGit {
+    param([object[]]$Plans)
     $script:GitExecutable = (Get-Command git.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
     $hooks = Join-Path ([IO.Path]::GetTempPath()) ('extension-update-empty-hooks-' + [Guid]::NewGuid().ToString('N'))
     $null = New-Item -ItemType Directory -Path $hooks
@@ -117,8 +120,7 @@ function Start-FolderUpdate {
         $script:GitOptions = @('-c', "core.hooksPath=$hooks", '-c', 'core.fsmonitor=false', '-c', 'submodule.recurse=false',
             '-c', 'fetch.recurseSubmodules=false', '-c', 'merge.autoStash=false', '-c', 'branch.master.mergeOptions=', '-c', 'gc.auto=0', '-c', 'maintenance.auto=false',
             '-c', 'protocol.allow=never', '-c', 'protocol.https.allow=always')
-        $plans = @(Get-LoadedRepositoryPlans)
-        foreach ($plan in $plans) {
+        foreach ($plan in $Plans) {
             $directory = Get-Item -LiteralPath $plan.Path -ErrorAction Stop
             if (-not $directory.PSIsContainer -or ($directory.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Expected an ordinary repository directory.' }
             $filters = Invoke-RepoGit $plan.Path @('config', '--name-only', '--get-regexp', '^filter\..*\.(smudge|process|clean|required)$') -AllowOne
@@ -127,6 +129,17 @@ function Start-FolderUpdate {
                 $script:GitOptions += @('-c', ($filter + '=' + $setting))
             }
         }
+        return $hooks
+    } catch {
+        [IO.Directory]::Delete($hooks, $false)
+        throw
+    }
+}
+
+function Start-FolderUpdate {
+    $plans = @(Get-LoadedRepositoryPlans)
+    $hooks = Initialize-UpdateGit $plans
+    try {
         # Validate both candidates before updating either working tree. Fetch may update tracking refs.
         $prepared = @($plans | ForEach-Object { Prepare-RepositoryUpdate $_ })
         foreach ($candidate in $prepared) { Apply-RepositoryUpdate $candidate }
