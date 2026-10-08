@@ -1,0 +1,628 @@
+{
+  "schemaVersion": 1,
+  "kind": "read-only-native-preflight-and-source-viewport-fix",
+  "machine": "E-DESK-5060",
+  "sourceCommit": "f9af09fd7e75f82e15b0e4f202db451a4e7071c2",
+  "tests": {
+    "passed": 160,
+    "failed": 0,
+    "skipped": 0,
+    "cancelled": 0,
+    "harnessTests": 30,
+    "scope": "Exact source archive, synthetic state with network/subprocess guard"
+  },
+  "viewport": {
+    "fixture": "nested-static-shell",
+    "requiredWidthCss": 2048,
+    "minHeightCss": 1,
+    "maxHeightCss": 320,
+    "measurement": "window.innerWidth/innerHeight through ordinary page inspection",
+    "coordinatorRequiresMeasurement": true,
+    "missingGateMutationDetected": true
+  },
+  "observed": {
+    "kind": "read-only-native-preflight",
+    "observedAt": "2026-10-08T00:10:59.5012972Z",
+    "os": {
+      "caption": "Microsoft Windows 11 Pro",
+      "version": "10.0.26300",
+      "build": "26300",
+      "architecture": "64-bit"
+    },
+    "session": {
+      "processSession": 1,
+      "userInteractive": true,
+      "explorerSessions": [
+        1
+      ],
+      "screens": [
+        {
+          "primary": true,
+          "bounds": {
+            "x": 0,
+            "y": 0,
+            "width": 2194,
+            "height": 1234
+          },
+          "workingArea": {
+            "x": 0,
+            "y": 0,
+            "width": 2194,
+            "height": 1186
+          }
+        },
+        {
+          "primary": false,
+          "bounds": {
+            "x": 2194,
+            "y": 0,
+            "width": 2194,
+            "height": 1234
+          },
+          "workingArea": {
+            "x": 2194,
+            "y": 0,
+            "width": 2194,
+            "height": 1186
+          }
+        }
+      ]
+    },
+    "browsers": [
+      {
+        "path": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+        "productVersion": "154.0.8037.98",
+        "fileVersion": "154.0.8037.98",
+        "sha256": "6849d2982038de9f9489a7b3858f3b785b7fec06a842c93c517281d21995c8ca",
+        "signatureStatus": "Valid",
+        "signer": "CN=Google LLC, O=Google LLC, L=Mountain View, S=California, C=US, SERIALNUMBER=3582691, OID.2.5.4.15=Private Organization, OID.1.3.6.1.4.1.311.60.2.1.2=Delaware, OID.1.3.6.1.4.1.311.60.2.1.3=US"
+      },
+      {
+        "path": "C:\\Program Files\\Mozilla Firefox\\firefox.exe",
+        "productVersion": "147.0.4",
+        "fileVersion": "147.0.4",
+        "sha256": "6cd3bf5fa9ddb95aa256b71cadd580b40d03590b23963d0b6396953416e66542",
+        "signatureStatus": "Valid",
+        "signer": "CN=Mozilla Corporation, OU=Firefox Engineering Operations, O=Mozilla Corporation, L=San Francisco, S=California, C=US"
+      }
+    ],
+    "nativeBrowserLaunched": false,
+    "installedProfileModified": false
+  },
+  "packages": {
+    "kind": "original-ci-development-package-inspection",
+    "buildRunId": "37705317312",
+    "artifactId": "11519217814",
+    "artifactDigestReportedByGithub": "sha256:ad3401ee59f28545a0b89c4cf911a8bf97ab3cd6d9b479d4ac8085753c1196aa",
+    "outerArchiveDigestLocallyVerified": false,
+    "rawGitBlobExactCheck": "passed",
+    "workingTreeArchiveExactCheck": "failed: local CRLF working-tree conversion; never used as raw-blob identity",
+    "targets": [
+      {
+        "target": "chrome",
+        "filename": "capture-full-page-chrome-5.3.0.zip",
+        "zipSha256": "e32b101339dd35144a11973b8a572878135d114c18ea2d07558d498acb8b3cd4",
+        "zipBytes": 62411,
+        "sourceCommit": "e625f8c3b602356e1b0564f191d1140f21b5f4bc",
+        "allPayloadBytesEqualRawGitBlob": true,
+        "exactMemberSet": true,
+        "canonical1980Dates": false,
+        "canonicalReleaseInventoryPresent": false,
+        "releaseQualified": false,
+        "members": [
+          {
+            "path": "capture-protocol.js",
+            "size": 41721,
+            "sha256": "ac94e60a1cec22cedd32caee4ac7c0dd6ad9f36b34167ee81d2bcb9b553a785e",
+            "rawGitBlobBytesEqual": true,
+            "zipDate": [
+              2026,
+              10,
+              7,
+              23,
+              59,
+              36
+            ],
+            "mode": "0o100644",
+            "compression": 8
+          },
+          {
+            "path": "content.js",
+            "size": 91927,
+            "sha256": "ed06b14535e0001d230f61a68d7ac8ccf87b379c5827ff8c4327ad2078f4e93c",
+            "rawGitBlobBytesEqual": true,
+            "zipDate": [
+              2026,
+              10,
+              7,
+              23,
+              59,
+              36
+            ],
+            "mode": "0o100644",
+            "compression": 8
+          },
+          {
+            "path": "icons/icon128.png",
+            "size": 811,
+            "sha256": "7db817f9d834d6f98bf3c55b40f36b2c9cf8d8cb1dd3c6098fc357b75c2167d5",
+            "rawGitBlobBytesEqual": true,
+            "zipDate": [
+              2026,
+              10,
+              7,
+              23,
+              59,
+              36
+            ],
+            "mode": "0o100644",
+            "compression": 8
+          },
+          {
+            "path": "icons/icon16.png",
+            "size": 195,
+            "sha256": "60a13899e9a108eb0c7e548ff5d02ffa64215e56e2436db8340b8cf597249840",
+            "rawGitBlobBytesEqual": true,
+            "zipDate": [
+              2026,
+              10,
+              7,
+              23,
+              59,
+              36
+            ],
+            "mode": "0o100644",
+            "compression": 8
+          },
+          {
+            "path": "icons/icon32.png",
+            "size": 325,
+            "sha256": "61fe8703eb5c2c2cf6ee623b760df0500fdbc2257c361c25ac75a5d46fa2476e",
+            "rawGitBlobBytesEqual": true,
+            "zipDate": [
+              2026,
+              10,
+              7,
+              23,
+              59,
+              36
+            ],
+            "mode": "0o100644",
+            "compression": 8
+          },
+          {
+            "path": "icons/icon48.png",
+            "size": 400,
+            "sha256": "c543a0a23373d791bf093f1e20726271b9537a29d9354697faef85076f4adb68",
+            "rawGitBlobBytesEqual": true,
+            "zipDate": [
+              2026,
+              10,
+              7,
+              23,
+              59,
+              36
+            ],
+            "mode": "0o100644",
+            "compression": 8
+          },
+          {
+            "path": "manifest.json",
+            "size": 792,
+            "sha256": "04e9c0fc41be43dbb7767bddd48cf705e3dd73281d11e4d30f7e54c79c36557a",
+            "rawGitBlobBytesEqual": true,
+            "zipDate": [
+              2026,
+              10,
+              7,
+              23,
+              59,
+              36
+            ],
+            "mode": "0o100644",
+            "compression": 8
+          },
+          {
+            "path": "offscreen.html",
+            "size": 204,
+            "sha256": "546dc22725c76e0c390c7a4a1024fe99102cee30c4398d18adb0bea78a6d296d",
+            "rawGitBlobBytesEqual": true,
+            "zipDate": [
+              2026,
+              10,
+              7,
+              23,
+              59,
+              36
+            ],
+            "mode": "0o100644",
+            "compression": 8
+          },
+          {
+            "path": "offscreen.js",
+            "size": 50795,
+            "sha256": "bebf24490ac04df7e895190aa807029f98274005abed7d243efa998df96105a7",
+            "rawGitBlobBytesEqual": true,
+            "zipDate": [
+              2026,
+              10,
+              7,
+              23,
+              59,
+              36
+            ],
+            "mode": "0o100644",
+            "compression": 8
+          },
+          {
+            "path": "popup.css",
+            "size": 1132,
+            "sha256": "f61db830da8107bff0ee50f8968b8dbc3794c4e913bbad63c4641a80151c6338",
+            "rawGitBlobBytesEqual": true,
+            "zipDate": [
+              2026,
+              10,
+              7,
+              23,
+              59,
+              36
+            ],
+            "mode": "0o100644",
+            "compression": 8
+          },
+          {
+            "path": "popup.html",
+            "size": 682,
+            "sha256": "5dfafb066c4398c9457f966ee78060fcb6cfb6f3b87cb8ec63a26941e15d76d7",
+            "rawGitBlobBytesEqual": true,
+            "zipDate": [
+              2026,
+              10,
+              7,
+              23,
+              59,
+              36
+            ],
+            "mode": "0o100644",
+            "compression": 8
+          },
+          {
+            "path": "popup.js",
+            "size": 3749,
+            "sha256": "f7e709116cf556a9041464f9d6ec539623a6e46b8866c61e6be9b831cffb4d19",
+            "rawGitBlobBytesEqual": true,
+            "zipDate": [
+              2026,
+              10,
+              7,
+              23,
+              59,
+              36
+            ],
+            "mode": "0o100644",
+            "compression": 8
+          },
+          {
+            "path": "service-worker.js",
+            "size": 57395,
+            "sha256": "a86b9e152795a2f37cbeb11ca462ff3d94200cc697a87b1a24b34cdcd767811d",
+            "rawGitBlobBytesEqual": true,
+            "zipDate": [
+              2026,
+              10,
+              7,
+              23,
+              59,
+              36
+            ],
+            "mode": "0o100644",
+            "compression": 8
+          }
+        ],
+        "strictUnsignedZipGate": {
+          "status": "blocked",
+          "reason": "Noncanonical mode/date or symlink entry"
+        },
+        "actualSourceCapabilities": {
+          "privateCapture": false,
+          "preserveVirtualizer": false
+        }
+      },
+      {
+        "target": "firefox",
+        "filename": "capture-full-page-firefox-5.3.0.zip",
+        "zipSha256": "7e50b8269d5fc754b2fb84a493b8fbee29da620f231f089259901c941224794c",
+        "zipBytes": 62272,
+        "sourceCommit": "e625f8c3b602356e1b0564f191d1140f21b5f4bc",
+        "allPayloadBytesEqualRawGitBlob": true,
+        "exactMemberSet": true,
+        "canonical1980Dates": false,
+        "canonicalReleaseInventoryPresent": false,
+        "releaseQualified": false,
+        "members": [
+          {
+            "path": "capture-protocol.js",
+            "size": 41721,
+            "sha256": "ac94e60a1cec22cedd32caee4ac7c0dd6ad9f36b34167ee81d2bcb9b553a785e",
+            "rawGitBlobBytesEqual": true,
+            "zipDate": [
+              2026,
+              10,
+              7,
+              23,
+              59,
+              36
+            ],
+            "mode": "0o100644",
+            "compression": 8
+          },
+          {
+            "path": "content.js",
+            "size": 91927,
+            "sha256": "ed06b14535e0001d230f61a68d7ac8ccf87b379c5827ff8c4327ad2078f4e93c",
+            "rawGitBlobBytesEqual": true,
+            "zipDate": [
+              2026,
+              10,
+              7,
+              23,
+              59,
+              36
+            ],
+            "mode": "0o100644",
+            "compression": 8
+          },
+          {
+            "path": "icons/icon128.png",
+            "size": 811,
+            "sha256": "7db817f9d834d6f98bf3c55b40f36b2c9cf8d8cb1dd3c6098fc357b75c2167d5",
+            "rawGitBlobBytesEqual": true,
+            "zipDate": [
+              2026,
+              10,
+              7,
+              23,
+              59,
+              36
+            ],
+            "mode": "0o100644",
+            "compression": 8
+          },
+          {
+            "path": "icons/icon16.png",
+            "size": 195,
+            "sha256": "60a13899e9a108eb0c7e548ff5d02ffa64215e56e2436db8340b8cf597249840",
+            "rawGitBlobBytesEqual": true,
+            "zipDate": [
+              2026,
+              10,
+              7,
+              23,
+              59,
+              36
+            ],
+            "mode": "0o100644",
+            "compression": 8
+          },
+          {
+            "path": "icons/icon32.png",
+            "size": 325,
+            "sha256": "61fe8703eb5c2c2cf6ee623b760df0500fdbc2257c361c25ac75a5d46fa2476e",
+            "rawGitBlobBytesEqual": true,
+            "zipDate": [
+              2026,
+              10,
+              7,
+              23,
+              59,
+              36
+            ],
+            "mode": "0o100644",
+            "compression": 8
+          },
+          {
+            "path": "icons/icon48.png",
+            "size": 400,
+            "sha256": "c543a0a23373d791bf093f1e20726271b9537a29d9354697faef85076f4adb68",
+            "rawGitBlobBytesEqual": true,
+            "zipDate": [
+              2026,
+              10,
+              7,
+              23,
+              59,
+              36
+            ],
+            "mode": "0o100644",
+            "compression": 8
+          },
+          {
+            "path": "manifest.json",
+            "size": 1045,
+            "sha256": "b8cdaac171cb0398c3feb06837f50363f99588fa02fd88eb8ac3412bd357e0a4",
+            "rawGitBlobBytesEqual": true,
+            "zipDate": [
+              2026,
+              10,
+              7,
+              23,
+              59,
+              36
+            ],
+            "mode": "0o100644",
+            "compression": 8
+          },
+          {
+            "path": "offscreen.js",
+            "size": 50795,
+            "sha256": "bebf24490ac04df7e895190aa807029f98274005abed7d243efa998df96105a7",
+            "rawGitBlobBytesEqual": true,
+            "zipDate": [
+              2026,
+              10,
+              7,
+              23,
+              59,
+              36
+            ],
+            "mode": "0o100644",
+            "compression": 8
+          },
+          {
+            "path": "popup.css",
+            "size": 1132,
+            "sha256": "f61db830da8107bff0ee50f8968b8dbc3794c4e913bbad63c4641a80151c6338",
+            "rawGitBlobBytesEqual": true,
+            "zipDate": [
+              2026,
+              10,
+              7,
+              23,
+              59,
+              36
+            ],
+            "mode": "0o100644",
+            "compression": 8
+          },
+          {
+            "path": "popup.html",
+            "size": 682,
+            "sha256": "5dfafb066c4398c9457f966ee78060fcb6cfb6f3b87cb8ec63a26941e15d76d7",
+            "rawGitBlobBytesEqual": true,
+            "zipDate": [
+              2026,
+              10,
+              7,
+              23,
+              59,
+              36
+            ],
+            "mode": "0o100644",
+            "compression": 8
+          },
+          {
+            "path": "popup.js",
+            "size": 3749,
+            "sha256": "f7e709116cf556a9041464f9d6ec539623a6e46b8866c61e6be9b831cffb4d19",
+            "rawGitBlobBytesEqual": true,
+            "zipDate": [
+              2026,
+              10,
+              7,
+              23,
+              59,
+              36
+            ],
+            "mode": "0o100644",
+            "compression": 8
+          },
+          {
+            "path": "service-worker.js",
+            "size": 57395,
+            "sha256": "a86b9e152795a2f37cbeb11ca462ff3d94200cc697a87b1a24b34cdcd767811d",
+            "rawGitBlobBytesEqual": true,
+            "zipDate": [
+              2026,
+              10,
+              7,
+              23,
+              59,
+              36
+            ],
+            "mode": "0o100644",
+            "compression": 8
+          }
+        ],
+        "strictUnsignedZipGate": {
+          "status": "blocked",
+          "reason": "Noncanonical mode/date or symlink entry"
+        },
+        "actualSourceCapabilities": {
+          "privateCapture": false,
+          "preserveVirtualizer": false
+        }
+      }
+    ]
+  },
+  "approvedCanonicalRuntime": {
+    "os": "Ubuntu24.04 x64",
+    "chrome": "155.0.8059.39 Linux",
+    "firefox": "157.0.1"
+  },
+  "runtimeMatchesCanonical": false,
+  "wsl": {
+    "distribution": "Ubuntu",
+    "version": 2,
+    "state": "Stopped",
+    "release": "not verified; distribution not started"
+  },
+  "gui": {
+    "interactiveSessionPresent": true,
+    "windowsUIAutomationAssemblies": "loaded for availability check only; no windows enumerated or input sent",
+    "generalGuiToolExposed": false,
+    "humanAvailability": "not verified",
+    "reviewedOwnedUiHelper": "needed if not human operated"
+  },
+  "officialProvisioning": {
+    "chromeWin64Version": "155.0.8059.39",
+    "availabilitySource": "https://googlechromelabs.github.io/chrome-for-testing/",
+    "download": "https://storage.googleapis.com/chrome-for-testing-public/155.0.8059.39/win64/chrome-win64.zip",
+    "browserDownloaded": false,
+    "browserLaunched": false,
+    "windowsQualificationScope": "requires explicit reviewed approval; never inferred from Linux pin"
+  },
+  "preSubmitQaAdmission": "blocked: noncanonical development ZIP dates and no approved production inventory/toolchain; no metadata fabricated",
+  "smallestFirstRun": {
+    "proposalOnly": true,
+    "target": "Chrome",
+    "scope": "one genuine nested-static-shell native pilot; not completed full PreSubmitQa",
+    "candidateChromeSha256": "e32b101339dd35144a11973b8a572878135d114c18ea2d07558d498acb8b3cd4",
+    "viewport": "measured2048x320 CSS px",
+    "geometry": "320 ->1088 ->320 CSS document height",
+    "output": "exactlyone saved PNG; width=round(2048*s), height=round(1088*s), predeclare observed devicePixelRatio s before gesture",
+    "downloadTimeoutMs": 900000,
+    "minimumFinalObservationMs": 15000,
+    "cleanup": "ordinary close of owned window; exact owned child exit, retained profile/downloads/evidence; no unrelated processes affected",
+    "approvalNeeded": [
+      "Explicit Windows11 build26300/CfT155.0.8059.39 Win64 pilot scope or separately approved exact supported Linux route",
+      "Bind original observed CI development candidate hash to limited native pilot; full production admission stays blocked",
+      "Review human/owned UI Automation interaction and task-owned portable provisioning plan before launch"
+    ]
+  },
+  "nativeQualification": "not-run",
+  "installedExtensionOrProfileChanges": false,
+  "receipts": [
+    {
+      "path": "qa-nested-viewport-exact-tests.log",
+      "sha256": "e47ee0fb936d6098e9118bfadbc654d7ba7615bfa45a6c29f098da26f1805e0d"
+    },
+    {
+      "path": "qa-nested-viewport-focused-final.log",
+      "sha256": "6bc4b5ca50c93c1bb2fe1d956dd29c10c8c420ed2a860ea578bbfa77429b2d9f"
+    },
+    {
+      "path": "qa-nested-viewport-mutation.log",
+      "sha256": "6472eb87b5071a36834bba8d6d79394b226e2655b8fe6e42b3ccbb811b6ea66e"
+    },
+    {
+      "path": "native-preflight-current.json",
+      "sha256": "7c13c2d07a130ec4f4c8cbd8a78e44d1f0456858f7a0735ee17700701919db50"
+    },
+    {
+      "path": "native-preflight-package-receipts.json",
+      "sha256": "825e6458b1d8d20861a36396ade078c8a81795e7b1c451f5001348576839c1d0"
+    },
+    {
+      "path": "native-preflight-package-byte-differences.json",
+      "sha256": "a666b0c0840f1895daf871362e05b919023f9bc77841a5bdefda190ed9ebbc8c"
+    },
+    {
+      "path": "native-preflight-artifacts-e625.json",
+      "sha256": "ef5c7313b8f09cd7e57155b5844aaaffd202b72d584c9627fd92dfc25f18fb5e"
+    },
+    {
+      "path": "native-preflight-ci-e625-provenance.json",
+      "sha256": "4700c9e4e1e918b5abfac02b3e973e9a13f059e6da4125002d6b70b2a6235c6d"
+    }
+  ]
+}
