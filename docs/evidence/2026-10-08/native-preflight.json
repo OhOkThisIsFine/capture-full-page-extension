@@ -561,7 +561,13 @@
     "windowsUIAutomationAssemblies": "loaded for availability check only; no windows enumerated or input sent",
     "generalGuiToolExposed": false,
     "humanAvailability": "not verified",
-    "reviewedOwnedUiHelper": "needed if not human operated"
+    "reviewedOwnedUiHelper": "not authorized as a workaround for disabled native APIs",
+    "capabilityTask": "01a1191b-f752-7472-a7df-48b11edc6021",
+    "nativeComputerApis": "disabled; parent capability task confirmation",
+    "windowsNodeReplRuntime": "no callable runtime; parent capability task confirmation",
+    "machineConnectivity": "E-Desk connected per parent catalog; stale DesktopCommander offline record is not connectivity truth",
+    "pilotStatus": "blocked on supported native GUI input/screenshot capability",
+    "portableBrowserInstallOrLaunch": "not authorized while supported native GUI capability is unavailable"
   },
   "officialProvisioning": {
     "chromeWin64Version": "155.0.8059.39",
@@ -586,7 +592,8 @@
     "approvalNeeded": [
       "Explicit Windows11 build26300/CfT155.0.8059.39 Win64 pilot scope or separately approved exact supported Linux route",
       "Bind original observed CI development candidate hash to limited native pilot; full production admission stays blocked",
-      "Review human/owned UI Automation interaction and task-owned portable provisioning plan before launch"
+      "Supported native GUI input/screenshot capability must be available; no custom UIAutomation workaround or portable browser install/launch to bypass disabled APIs",
+      "Parent review of supported GUI route and task-owned portable provisioning plan before launch"
     ]
   },
   "nativeQualification": "not-run",

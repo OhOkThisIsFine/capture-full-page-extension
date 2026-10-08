@@ -15,9 +15,13 @@ interactive process/Explorer session1 and two reported2194x1234 screen bounds, w
 These are Windows-reported monitor metrics, not an observed Chrome CSS viewport or DPR.
 Windows UIAutomationClient/Types assemblies load, but no windows were enumerated, screenshots
 captured or input sent. Current tool inventory exposes terminal/file/process APIs and no general
-GUI input/screenshot tool. A reviewed helper scoped to the new browser PID/profile/window or a
-human operating this same session can provide ordinary UI; availability of an actual human or
-successful helper interaction has not yet been established.
+GUI input/screenshot tool. Parent capability task `01a1191b-f752-7472-a7df-48b11edc6021`
+subsequently confirmed native computer APIs are disabled and no callable Windows node_repl runtime
+exists. Assembly availability is not a supported input/screenshot route. E-Desk is connected according
+to the parent catalog; the stale DesktopCommander offline record is not machine connectivity truth.
+The pilot is blocked on supported native GUI capability. No portable browser installation/launch or
+custom UIAutomation helper is authorized to bypass the disabled APIs; an existing Brave extension
+does not establish portable Chrome control.
 
 Installed signed Chrome 154.0.8037.98 and Firefox 147.0.4 differ from approved pins. Chrome executable
 SHA256 6849d2982038de9f9489a7b3858f3b785b7fec06a842c93c517281d21995c8ca; Firefox SHA256
@@ -86,10 +90,12 @@ roadmap, but must stay separate from full production qualification.
    retain profile/downloads/evidence and actual restoration observations. Stop at persistent grants
    or unexpected security prompts. No user's existing extension/profile or unrelated process changes.
 
-The outstanding review decisions are the explicit runtime/platform/pilot-candidate scope and
-human versus reviewed owned UIAutomation helper, followed by scoped official provisioning.
-No native launch until those are reviewed. This is concrete local coordination, not a request
-for a special external coordinator or permission to transfer execution to another workspace.
+This exact proposal is checkpointed, not executable in the current capability state. The immediate
+blocker is a supported native GUI input/screenshot route on the connected selected machine.
+Runtime/platform/pilot-candidate and provisioning scope still need parent review after that capability
+is available. Do not install/launch a portable browser, implement a custom UIAutomation workaround,
+or transfer execution to evade the disabled native APIs. No further speculative harness expansion
+is needed to report this capability block.
 
 ## Exact evidence commands
 
@@ -115,5 +121,6 @@ strict real-package admission then reported blocked (not passed). Failed experim
 
 Microsoft documents [UI Automation](https://learn.microsoft.com/en-us/dotnet/framework/ui-automation/ui-automation-overview)
 as the supported Windows accessibility/automated-test API. Assembly availability here is
-only a foundation for a reviewed task-owned interaction helper; no successful browser GUI
-control or genuine native capture is inferred from loading those assemblies.
+an assembly availability observation. It does not establish a supported interaction route in this
+environment or authorize a workaround for disabled native computer APIs. Native GUI capture,
+downloads, pixel/geometry/restoration/cleanup qualification remain not run.
