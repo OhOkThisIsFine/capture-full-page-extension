@@ -77,6 +77,42 @@ function Get-UpdaterTaskSpecification {
     }
 }
 
+function Resolve-UpdaterPrincipalSid {
+    param([string]$Identity)
+    if($Identity -match '^S-1-'){return [Security.Principal.SecurityIdentifier]::new($Identity).Value}
+    return [Security.Principal.NTAccount]::new($Identity).Translate([Security.Principal.SecurityIdentifier]).Value
+}
+
+function Assert-UpdaterTaskPaths {
+    param($Spec)
+    foreach($path in @($Spec.Root,$Spec.Execute,(Join-Path $Spec.Root 'automatic-folder-updater.ps1'))){
+        if($path -match '["\r\n]' -or -not [IO.Path]::IsPathRooted($path) -or
+           -not [string]::Equals([IO.Path]::GetFullPath($path),$path,[StringComparison]::OrdinalIgnoreCase)){
+            throw 'Task paths must be canonical absolute native paths.'
+        }
+        $item=Get-Item -LiteralPath $path -ErrorAction Stop
+        if($item.Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'Task paths must be ordinary native paths.'}
+        if(($path -ceq $Spec.Root) -ne $item.PSIsContainer){throw 'Task path has the wrong file/directory type.'}
+    }
+}
+
+function Assert-UpdaterTaskReadback {
+    param($Installed,$Spec)
+    $principalMatches=$false
+    try{
+        $expected=Resolve-UpdaterPrincipalSid $Spec.User
+        $observed=Resolve-UpdaterPrincipalSid $Installed.Principal.UserId
+        $principalMatches=$expected -ceq $observed -and $expected -ceq [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    }catch{$principalMatches=$false}
+    if($Installed.Actions.Count -ne 1 -or $Installed.Actions[0].Execute -cne $Spec.Execute -or
+       $Installed.Actions[0].Arguments -cne $Spec.Arguments -or $Installed.Actions[0].WorkingDirectory -cne $Spec.Root -or
+       -not $principalMatches -or [string]$Installed.Principal.LogonType -cne 'Interactive' -or
+       [string]$Installed.Principal.RunLevel -cne 'Limited' -or [string]$Installed.Settings.MultipleInstances -cne 'IgnoreNew' -or
+       $Installed.Settings.ExecutionTimeLimit -cne 'PT5M' -or
+       -not @($Installed.Triggers|Where-Object{$_.Repetition.Interval -ceq 'PT15M'}).Count){throw 'Task registered but readback differs; report exact mismatch, do not claim verified setup.'}
+    Assert-UpdaterTaskPaths $Spec
+}
+
 function Install-OwnerAutomaticUpdater {
     param([string]$ApprovedSourceCommit)
     $sourceRoot=Get-InstallerSourceRoot
@@ -96,6 +132,7 @@ function Install-OwnerAutomaticUpdater {
         if((Get-FileHash -Algorithm SHA256 -LiteralPath $destination).Hash.ToLowerInvariant() -cne $file.Sha256){throw 'Installed script readback mismatch; task not registered.'}
         $files += [pscustomobject]@{name=$name;sha256=$file.Sha256}
     }
+    Assert-UpdaterTaskPaths $spec
     $action=New-ScheduledTaskAction -Execute $spec.Execute -Argument $spec.Arguments -WorkingDirectory $spec.Root
     $repeat=New-ScheduledTaskTrigger -Once -At ((Get-Date).AddMinutes(1)) -RepetitionInterval (New-TimeSpan -Minutes $spec.IntervalMinutes)
     $logon=New-ScheduledTaskTrigger -AtLogOn -User $spec.User
@@ -103,16 +140,7 @@ function Install-OwnerAutomaticUpdater {
     $settings=New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes $spec.ExecutionMinutes) -Hidden -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
     $null=Register-ScheduledTask -TaskName $spec.Name -Action $action -Trigger @($repeat,$logon) -Principal $principal -Settings $settings -Description 'Owner-approved tested updates for the two C:\Code unpacked Brave extension folders; no browser control.'
     $installed=Get-ScheduledTask -TaskName $spec.Name
-    $principalMatches=$installed.Principal.UserId -ceq $spec.User
-    if(-not $principalMatches){
-        try{$resolved=[Security.Principal.NTAccount]::new($spec.User).Translate([Security.Principal.SecurityIdentifier]).Value;$principalMatches=$installed.Principal.UserId -ceq $resolved}catch{$principalMatches=$false}
-    }
-    if($installed.Actions.Count -ne 1 -or $installed.Actions[0].Execute -cne $spec.Execute -or
-       $installed.Actions[0].Arguments -cne $spec.Arguments -or $installed.Actions[0].WorkingDirectory -cne $spec.Root -or
-       -not $principalMatches -or [string]$installed.Principal.LogonType -cne 'Interactive' -or
-       [string]$installed.Principal.RunLevel -cne 'Limited' -or [string]$installed.Settings.MultipleInstances -cne 'IgnoreNew' -or
-       $installed.Settings.ExecutionTimeLimit -cne 'PT5M' -or
-       -not @($installed.Triggers|Where-Object{$_.Repetition.Interval -ceq 'PT15M'}).Count){throw 'Task registered but readback differs; report exact mismatch, do not claim verified setup.'}
+    Assert-UpdaterTaskReadback $installed $spec
     $record=[ordered]@{schemaVersion=1;sourceCommit=$ApprovedSourceCommit;task=$spec.Name;files=$files;registeredAt=[DateTime]::UtcNow.ToString('o');browserReloadObserved=$false}
     [IO.File]::WriteAllText((Join-Path $spec.Root 'installation.json'),($record|ConvertTo-Json -Depth 5),[Text.UTF8Encoding]::new($false))
     Write-Host "Registered $($spec.Name): current interactive user, limited privileges, every15minutes/logon."
