@@ -10,6 +10,14 @@ permissions:
   contents: read
 
 jobs:
+  folder-updater:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify folder updater safety with synthetic Git histories
+        run: powershell.exe -NoProfile -File tests/folder-updater.test.ps1
+      - name: Verify automatic promotion and marker publication
+        run: powershell.exe -NoProfile -File tests/automatic-updater.test.ps1
   build:
     runs-on: ubuntu-latest
     steps:

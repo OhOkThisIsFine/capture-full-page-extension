@@ -191,6 +191,7 @@ function validateManifest(bytes, target, version, files) {
   Q.text(m.name, 160);
   Q.text(m.description, 1024);
   const allowed = [
+      ...(target === "chrome" ? ["alarms"] : []),
     "activeTab",
     "contextMenus",
     "downloads",

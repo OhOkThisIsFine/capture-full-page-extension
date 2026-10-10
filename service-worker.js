@@ -1,3 +1,71 @@
+// owner-folder-update:begin
+// Local completion marker only; no remote code, provider requests, or idle wait.
+(() => {
+  const api = globalThis.chrome;
+  if (!api?.alarms?.onAlarm || !api.runtime?.getURL || !api.runtime?.reload) return;
+  const alarmName = "owner-folder-update-v1";
+  const loadedVersion = api.runtime.getManifest().version;
+  let checking = false;
+  let reloading = false;
+  function versionParts(value) {
+    if (typeof value !== "string" || !/^(0|[1-9]\d{0,4})(\.(0|[1-9]\d{0,4})){0,3}$/.test(value)) return null;
+    const parts = value.split(".").map(Number);
+    if (parts.some(part => part > 65535) || !parts.some(Boolean)) return null;
+    while (parts.length < 4) parts.push(0);
+    return parts;
+  }
+  async function checkMarker() {
+    if (checking || reloading) return;
+    checking = true;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    try {
+      const response = await fetch(api.runtime.getURL("local-update-state.json") + "?check=" + Date.now(), {
+        cache: "no-store", credentials: "omit", signal: controller.signal
+      });
+      if (!response.ok) return;
+      const text = await response.text();
+      if (controller.signal.aborted || text.length > 1024) return;
+      const marker = JSON.parse(text);
+      if (!marker || Array.isArray(marker) || Object.keys(marker).sort().join(",") !== "commit,releaseVersion,schemaVersion" ||
+          marker.schemaVersion !== 1 || typeof marker.commit !== "string" || !/^[0-9a-f]{40}$/.test(marker.commit)) return;
+      const current = versionParts(loadedVersion), next = versionParts(marker.releaseVersion);
+      if (!current || !next) return;
+      const index = next.findIndex((part, i) => part !== current[i]);
+      if (index < 0 || next[index] < current[index]) return;
+      const manifestResponse = await fetch(api.runtime.getURL("manifest.json") + "?check=" + Date.now(), {
+        cache: "no-store", credentials: "omit", signal: controller.signal
+      });
+      if (!manifestResponse.ok) return;
+      const manifestText = await manifestResponse.text();
+      if (controller.signal.aborted || manifestText.length > 65536) return;
+      const diskManifest = JSON.parse(manifestText);
+      if (!diskManifest || diskManifest.version !== marker.releaseVersion) return;
+      const finalMarker = await fetch(api.runtime.getURL("local-update-state.json") + "?check=" + Date.now(), {
+        cache: "no-store", credentials: "omit", signal: controller.signal
+      });
+      if (!finalMarker.ok || await finalMarker.text() !== text || controller.signal.aborted) return;
+      // The updater publishes this marker only after complete, verified checkout.
+      reloading = true;
+      try { api.runtime.reload(); } catch { reloading = false; }
+    } catch { /* Missing, malformed, partial or unreadable marker: no reload. */ }
+    finally { clearTimeout(timeout); checking = false; }
+  }
+  api.alarms.onAlarm.addListener(alarm => {
+    if (alarm.name === alarmName) void checkMarker();
+  });
+  void (async () => {
+    try {
+      const existing = await api.alarms.get(alarmName);
+      if (!existing || existing.periodInMinutes !== 1) {
+        await api.alarms.create(alarmName, { delayInMinutes: 1, periodInMinutes: 1 });
+      }
+      await checkMarker();
+    } catch { /* Keep the normal extension functional if scheduling fails. */ }
+  })();
+})();
+// owner-folder-update:end
+
 if (!globalThis.__cfpProtocol && typeof importScripts === "function")
   importScripts("capture-protocol.js");
 const WP = globalThis.__cfpProtocol;

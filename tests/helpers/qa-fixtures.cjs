@@ -137,6 +137,7 @@ function fixture(options = {}) {
         ),
       ),
     }));
+  const version = JSON.parse(files.find((f) => f.path === "manifest.json").bytes).version;
   const source = files.find((f) => f.path === "capture-protocol.js");
   if (options.actualCapabilities) {
     const re = new RegExp(
@@ -165,14 +166,14 @@ function fixture(options = {}) {
   }
   if (options.modify) options.modify(files);
   const archive = zip(files),
-    packagePath = path.join(dir, `capture-full-page-${target}-5.3.0.zip`);
+    packagePath = path.join(dir, `capture-full-page-${target}-${version}.zip`);
   fs.writeFileSync(packagePath, archive);
   const manifest = files.find((f) => f.path === "manifest.json");
   const inventory = {
     schemaVersion: 1,
     repository: "synthetic/qa-fixture",
     commit: "1".repeat(40),
-    version: "5.3.0",
+    version,
     releaseQualified: options.releaseQualified ?? true,
     toolchain: { ...TOOLCHAIN },
     targets: {

@@ -1,1 +1,4 @@
 dist/
+
+/local-update-state.json
+/.local-update-state.*.tmp
