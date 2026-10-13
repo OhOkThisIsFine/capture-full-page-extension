@@ -5,7 +5,6 @@
   "description": "Capture full pages reliably from the context menu or extension button, including app shells and nested scrolling content.",
   "minimum_chrome_version": "116",
   "permissions": [
-    "alarms",
     "contextMenus",
     "activeTab",
     "scripting",

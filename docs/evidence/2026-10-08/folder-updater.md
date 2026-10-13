@@ -1,3 +1,5 @@
+> **Superseded 2026-10-13:** Automatic local updating was canceled by the owner. These historical results do not authorize installation, repair, restart, or reinstatement. See [the retirement notice](../../automatic-folder-updates.md) and [current manual guidance](../../manual-folder-updates.md).
+
 # Loaded-folder update and one-shot helper evidence
 
 Owner-authorized disk update on E-DESK-5060:

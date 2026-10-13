@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
-    [string]$CaptureCommit = 'a6326a67fd40f6ea60c3dcbb9bb2324b18caa813',
-    [string]$RedditCommit = 'eb50f95b197d239c7ed562e27721b505363de1a4',
+    [string]$CaptureCommit = '',
+    [string]$RedditCommit = '',
     [switch]$DefineOnly
 )
 
@@ -137,6 +137,9 @@ function Initialize-UpdateGit {
 }
 
 function Start-FolderUpdate {
+    if ($CaptureCommit -cnotmatch '^[0-9a-f]{40}$' -or $RedditCommit -cnotmatch '^[0-9a-f]{40}$') {
+        throw 'Manual update refused: supply both explicit reviewed lowercase 40-hex SHAs with -CaptureCommit and -RedditCommit. This tool updates both folders; review both targets first.'
+    }
     $plans = @(Get-LoadedRepositoryPlans)
     $hooks = Initialize-UpdateGit $plans
     try {

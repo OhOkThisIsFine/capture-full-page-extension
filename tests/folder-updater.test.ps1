@@ -1,6 +1,7 @@
 # Real disposable Git worktrees; remote observations/fetch are synthetic. No browser or network.
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\..\scripts\update-loaded-folders.ps1" -DefineOnly
+. "$PSScriptRoot\manual-update-guard.test.ps1"
 $script:GitExecutable = (Get-Command git.exe -CommandType Application | Select-Object -First 1).Source
 $root = Join-Path ([IO.Path]::GetTempPath()) ('folder-updater-test-' + [Guid]::NewGuid().ToString('N'))
 $null = New-Item -ItemType Directory -Path $root
@@ -225,6 +226,8 @@ try {
         $null = Git-Test $candidate.Path @('config', 'branch.master.mergeOptions', '--squash')
         [IO.File]::WriteAllText((Join-Path $candidate.Path '.git\hooks\post-merge'), "#!/bin/sh`ntouch hook-ran`n")
     }
+    $CaptureCommit = $first.Commit
+    $RedditCommit = $second.Commit
     $script:VerifyProductionOptions = $true
     Start-FolderUpdate
     $script:VerifyProductionOptions = $false # Start has already removed its empty temporary hooks directory.
