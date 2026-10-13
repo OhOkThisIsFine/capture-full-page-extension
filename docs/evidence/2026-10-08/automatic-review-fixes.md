@@ -1,3 +1,5 @@
+> **Superseded 2026-10-13:** Automatic local updating was canceled by the owner. These historical results do not authorize installation, repair, restart, or reinstatement. See [the retirement notice](../../automatic-folder-updates.md) and [current manual guidance](../../manual-folder-updates.md).
+
 # Automatic updater review repairs
 
 Source bases: Capture `bff0f1f34263c5e5dbdf8fa3ce54a5ce5c730cca`, Reddit

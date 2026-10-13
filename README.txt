@@ -68,6 +68,13 @@ DEVELOPMENT INSTALL - CHROME
 4. Select this repository/directory.
 5. Reload the extension after code changes.
 
+EXISTING LOADED FOLDERS
+Automatic local folder updating was canceled. See docs/manual-folder-updates.md
+for the manual two-folder tool, which requires explicit reviewed SHAs for both
+extensions. After a separately authorized file update, Reload the relevant
+already-installed extension and refresh affected tabs. Disk updates alone do not
+verify the active browser version.
+
 DEVELOPMENT INSTALL - FIREFOX
 1. Run: python scripts/build.py --target firefox
 2. Open about:debugging#/runtime/this-firefox

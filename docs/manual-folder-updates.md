@@ -1,42 +1,25 @@
-# Update the two unpacked Brave extension folders
+# Manually update the two existing unpacked extension folders
 
-This one-shot helper is a review candidate, not installed. After independent review, keep
-`scripts/update-loaded-folders.cmd` beside `scripts/update-loaded-folders.ps1` in an approved
-location. Double-click the `.cmd` to run once. It uses existing Git authentication, creates no
-service/task/credentials, changes no persistent Git or PowerShell policy, and does not control Brave.
-If PowerShell policy refuses it, stop rather than bypass the policy.
+Automatic local updating was canceled; earlier automatic-updater approvals are superseded. The retained `scripts/update-loaded-folders.ps1` and adjacent `.cmd` wrapper are one-shot manual tools. Their source presence does not authorize updating loaded folders, installing helpers, or controlling Brave.
 
-The exact default owner-approved targets are:
+The tool intentionally targets **both** `C:\Code\capture-full-page-extension` and `C:\Code\reddit-autoblocker`. Select and review both exact owner `master` commits, and obtain authorization for both targets before a manual run. A Capture-only request must not implicitly update Reddit. There are no executable default targets: no arguments, either omitted SHA, malformed SHA, or uppercase SHA refuses before Git, temporary-directory creation, or checkout access. `-DefineOnly` imports functions without running an update.
 
-| Existing loaded folder | Reviewed master commit | Disk version |
-| --- | --- | --- |
-| `C:\Code\capture-full-page-extension` | `a6326a67fd40f6ea60c3dcbb9bb2324b18caa813` | 5.3.0 |
-| `C:\Code\reddit-autoblocker` | `eb50f95b197d239c7ed562e27721b505363de1a4` | 0.3.0 |
+From a separately approved helper location, an explicit run has this form; replace both placeholders with reviewed lowercase 40-hex commits:
 
-Capture was already fast-forwarded to this exact commit during the authorized update; Reddit was
-left unchanged. Both checkouts were clean afterward. These are disk observations, not Brave's
-active version. No browser reload, install, profile inspection or permission change occurred.
+```powershell
+powershell.exe -NoProfile -File scripts\update-loaded-folders.ps1 -CaptureCommit <reviewed-Capture-SHA> -RedditCommit <reviewed-Reddit-SHA>
+```
 
-The helper verifies ordinary exact repository roots, expected raw/effective HTTPS origins, `master`,
-all local edits/untracked files and Git operations. It refuses changed remote master, divergent/ahead
-history, manifest identity-key changes, submodules and checkout filter/encoding attributes. Both candidates are preflighted before
-either tree changes. A subsequent failure can leave the first repo successfully updated: there is no
-automatic rollback. Stop other editors/Git operations during the short run; it is not a filesystem lock.
-Every Git call uses `--no-replace-objects`, so local replacement refs cannot substitute the pinned
-commit's graph, manifest or checkout; existing replacement refs are preserved.
-Inherited `branch.master.mergeOptions` is cleared per command, and merges explicitly disable squash.
-Only fast-forward merges are allowed. Nothing resets, stashes, cleans, forces, builds, tests or installs
-repository code. Hooks, filters, fsmonitor and automatic maintenance are disabled per Git command.
-Existing ignored files and extension storage are not deleted; conflicting ignored/untracked files cause
-Git's ordinary merge refusal. Temporary cleanup removes only the helper's newly created empty hooks
-directory. Origin authentication may use the user's existing Git credential helper.
+The adjacent `.cmd` wrapper forwards the same arguments. A no-argument double-click refuses. If PowerShell policy refuses execution, stop rather than bypass it. Do not automatically select latest master, download refreshed helpers, or schedule the tool.
 
-For later updates, first choose and review exact owner `master` commits. Run the reviewed script with
-explicit `-CaptureCommit <40-character SHA> -RedditCommit <40-character SHA>` arguments. It deliberately
-does not execute an arbitrary latest release or repository update script. Defaults become stale and
-refuse if either remote advances. Review/installing a refreshed helper is a separate action.
+The helper verifies ordinary exact roots, expected raw/effective HTTPS origins, `master`, clean tracked/untracked state, hidden index flags, and Git operations. It refuses changed remote master, divergent/ahead history, manifest identity-key changes, submodules, and checkout filter/encoding attributes. The chosen target must still equal remote master: a changed remote requires review, not replacement with an unreviewed commit.
 
-After success, **click Reload for the relevant extension in `brave://extensions`, then reload affected
-tabs**. Loading the same folder preserves its location; the helper does not remove/re-add extensions,
-change their identity or touch Brave storage. Browser activation and actual functionality remain
-unverified until that user action and an ordinary-use check.
+Both candidates are preflighted before either tree changes. A subsequent failure can leave the first folder successfully updated; no automatic rollback is attempted. Stop other editors/Git operations during the run; the tool is not a filesystem lock. Every Git call uses `--no-replace-objects`, preserving existing replacement refs while preventing substitution of the pinned graph, manifest, or checkout. Inherited `branch.master.mergeOptions` is cleared per command; merges explicitly disable squash and allow only fast-forward updates.
+
+Nothing resets, stashes, cleans, forces, builds, tests, or installs repository code. Hooks, filters, fsmonitor, and automatic maintenance are disabled per Git command. The helper creates no service, task, or credentials and changes no persistent Git or PowerShell policy. Existing ignored files and extension storage are preserved; conflicting ignored/untracked files cause ordinary merge refusal. Temporary cleanup removes only the newly created empty hooks directory. Git authentication may use the existing credential helper.
+
+After a separately authorized successful disk update, open `brave://extensions` and click **Reload** for each relevant already-installed extension, then refresh affected tabs and verify ordinary functionality. Keep the same folder and extension identity. Disk updates alone do not establish the active browser version. This documentation/source retirement did not perform a local update, browser reload, or native smoke test.
+
+## Historical observations
+
+The former 5.3.0/0.3.0 target commits and machine/disk observations are retained in [the 2026-10-08 evidence](evidence/2026-10-08/folder-updater.md). Those pins are historical, not executable defaults or current approvals. Historical automatic repair evidence remains [here](evidence/2026-10-08/automatic-review-fixes.md). See [the retirement notice](automatic-folder-updates.md) and [reviewed retirement plan](plans/2026-10-13/updater-retirement-plan.md).
