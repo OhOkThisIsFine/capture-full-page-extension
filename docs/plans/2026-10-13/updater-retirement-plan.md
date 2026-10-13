@@ -2,6 +2,8 @@
 
 Prepared 2026-10-13. Planning only: no repository edits, pushes, task registration, local commands, computer access, or extension activation were performed.
 
+Reviewed addendum, 2026-10-13: the original plan above records its preparation state. This publication incorporates the independently source-reviewed minimal candidate-verifier correction below. The original Library input was 17,534 bytes, SHA-256 `a42fa4bd7bb659a48369d68a9e13afc5c929dd37002f795a5a80bc2cd3415bfc`; this amended copy has a distinct publication hash. Execution evidence belongs in the implementation PR, not in the historical preparation statement.
+
 ## Decision and bounds
 
 The owner's instruction was: “Terminal windows keep popping up on my machine. My guess is that it's the extension auto updater thing that we built. Let's just get rid of that.”
@@ -30,6 +32,7 @@ Each extension separately retains the same local-marker watcher: [Capture servic
 4. Do not change Firefox permission or background declarations: [manifest.firefox.json](https://github.com/OhOkThisIsFine/capture-full-page-extension/blob/924dc8aa6b487cb23d9987c10fb975d7441269e4/manifest.firefox.json#L6-L32) already lacks alarms and depends on the shared worker. Preserve protocol/offscreen/worker load order.
 5. Delete tests/automatic-updater.test.ps1 and tests/installer.test.ps1, which exercise the deleted automatic route. Replace tests/auto-update.test.cjs with a retirement regression, preferably renamed tests/updater-retirement.test.cjs. The old test explicitly requires the watcher and alarms permission ([old assertions](https://github.com/OhOkThisIsFine/capture-full-page-extension/blob/924dc8aa6b487cb23d9987c10fb975d7441269e4/tests/auto-update.test.cjs#L77-L83)); simply leaving it or weakening its assertions is incorrect.
 6. Remove only the automatic-promotion test step at [.github/workflows/build-extension.yml 19–20](https://github.com/OhOkThisIsFine/capture-full-page-extension/blob/924dc8aa6b487cb23d9987c10fb975d7441269e4/.github/workflows/build-extension.yml#L13-L20). Retain the Windows manual folder safety job and its tests/folder-updater.test.ps1 step. Preserve all unrelated build, publisher, release, lint, and capture tests.
+7. In `scripts/verify-qa-candidate.cjs::validateManifest`, remove only the Chrome-only `...(target === "chrome" ? ["alarms"] : [])` spread (baseline line 194). Retain the sorted canonical-array equality unchanged: Chrome requires exactly `activeTab`, `contextMenus`, `downloads`, `scripting`, `offscreen`; Firefox requires the same set without `offscreen`. Reject retired `alarms`; never make it optional or filter candidate inputs. Extend `tests/qa-contract.test.cjs` through its existing `fixture({ target, modify })` so changed manifest bytes receive matching archive/inventory hashes. Accept each exact set and reordered set. For both targets reject added `alarms`, `storage`, `nativeMessaging`, `debugger`, or `tabs`, every missing required permission, duplicates of each allowed permission, and a same-length replacement with `alarms`; reject Firefox `offscreen` and Chrome missing `offscreen`. Preserve unrelated tampering/load-order tests and `build.py`'s offscreen checks. Run verifier syntax plus focused QA-contract and packaged-browser tests before the full normal retirement/build gates.
 
 ### Reddit: shared-watcher cleanup only
 

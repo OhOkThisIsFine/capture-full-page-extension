@@ -249,6 +249,64 @@ test("unsigned production candidate verifier accepts complete synthetic Chrome/F
     }
   }
 });
+for (const target of ["chrome", "firefox"]) {
+  const required = [
+    "activeTab",
+    "contextMenus",
+    "downloads",
+    "scripting",
+    ...(target === "chrome" ? ["offscreen"] : []),
+  ];
+  function withPermissions(permissions, check) {
+    const f = fixture({
+      target,
+      modify(files) {
+        const file = files.find((entry) => entry.path === "manifest.json");
+        const manifest = JSON.parse(file.bytes);
+        manifest.permissions = permissions;
+        file.bytes = Buffer.from(JSON.stringify(manifest));
+      },
+    });
+    try {
+      check(() => V.verifyCandidate({
+        ...f,
+        expectedPackageSha256: f.expected.packageSha256,
+        expectedInventorySha256: f.expected.inventorySha256,
+      }));
+    } finally {
+      f.dispose();
+    }
+  }
+  test(`${target} candidate accepts only the exact retired permission set in any order`, () => {
+    for (const permissions of [required, [...required].reverse()]) {
+      withPermissions(permissions, (verify) => {
+        assert.equal(verify().inventory.releaseQualified, true);
+      });
+    }
+  });
+  test(`${target} candidate rejects added missing duplicate and replaced permissions`, () => {
+    const cases = [
+      ...["alarms", "storage", "nativeMessaging", "debugger", "tabs"].map((permission) =>
+        ({ label: `added ${permission}`, permissions: [...required, permission] })),
+      ...required.map((permission) => ({
+        label: `missing ${permission}`,
+        permissions: required.filter((entry) => entry !== permission),
+      })),
+      ...required.map((permission) =>
+        ({ label: `duplicate ${permission}`, permissions: [...required, permission] })),
+      { label: "same-length replacement with alarms", permissions: ["alarms", ...required.slice(1)] },
+      ...(target === "firefox"
+        ? [{ label: "Firefox offscreen", permissions: [...required, "offscreen"] }]
+        : []),
+    ];
+    for (const { label, permissions } of cases) {
+      withPermissions(permissions, (verify) => {
+        assert.throws(verify, /Unauthorized\/missing permissions/, `${target}: ${label}`);
+      });
+    }
+  });
+}
+
 test("candidate tampering stale inventory metadata path permission and load-order failures reject", () => {
   const bad = [
     (files) => {
